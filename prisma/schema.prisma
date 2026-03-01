@@ -19,6 +19,7 @@ model Tenant {
   updatedAt DateTime @updatedAt
   users     User[]
   leads     Lead[]
+  products  Product[]
 }
 
 model User {
@@ -34,6 +35,24 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   leadsAuditados Lead[] @relation("AuditadoPor")
+}
+
+// ─────────────────────────────────────────────
+// PRODUTO / CATÁLOGO
+// ─────────────────────────────────────────────
+model Product {
+  id                   String   @id @default(cuid())
+  name                 String
+  /// HARDWARE | SUBSCRIPTION_PLAN
+  type                 String   @default("HARDWARE")
+  description          String?
+  price                Float
+  commissionPercentage Float    @default(30)
+  isActive             Boolean  @default(true)
+  tenantId             String?
+  tenant               Tenant?  @relation(fields: [tenantId], references: [id])
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 }
 
 model Lead {

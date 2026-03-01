@@ -10,10 +10,11 @@ export interface NavItem {
 export function getNavItems(role: Role): NavItem[] {
   if (role === 'ADMIN_MASTER') {
     return [
-      { label: 'Dashboard Global', href: '/dashboard', icon: 'dashboard' },
-      { label: 'Gestão de Marcas', href: '/admin/tenants', icon: 'building' },
-      { label: 'Usuários', href: '/admin/usuarios', icon: 'users' },
-      { label: 'Configurações', href: '/admin/configuracoes', icon: 'settings' },
+      { label: 'Dashboard Global',         href: '/dashboard',         icon: 'dashboard'  },
+      { label: 'Catálogo e Comissões',        href: '/admin/produtos',     icon: 'products'   },
+      { label: 'Gestão de Marcas',            href: '/admin/tenants',      icon: 'building'   },
+      { label: 'Usuários',                    href: '/admin/usuarios',     icon: 'users'      },
+      { label: 'Configurações',               href: '/admin/configuracoes',icon: 'settings'   },
     ]
   }
 
