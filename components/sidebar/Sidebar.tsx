@@ -89,25 +89,40 @@ export default function Sidebar({ user }: SidebarProps) {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-        <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest px-3 mb-2">Menu</p>
-        {navItems.map(item => {
-          const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href + '/'))
-          return (
-            <Link key={item.href} href={item.href}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 group ${
-                isActive
-                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-              }`}>
-              <span className={isActive ? 'text-emerald-600' : 'text-slate-400 group-hover:text-slate-600'}>
-                {icons[item.icon] ?? icons.dashboard}
-              </span>
-              <span className="flex-1">{item.label}</span>
-              {isActive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"/>}
-            </Link>
-          )
-        })}
+      <nav className="flex-1 px-3 py-4 overflow-y-auto">
+        {(() => {
+          const sections: { title: string; items: typeof navItems }[] = []
+          for (const item of navItems) {
+            const sec = item.section ?? 'Menu'
+            let s = sections.find(x => x.title === sec)
+            if (!s) { s = { title: sec, items: [] }; sections.push(s) }
+            s.items.push(item)
+          }
+          return sections.map((sec, si) => (
+            <div key={sec.title} className={si > 0 ? 'mt-4' : ''}>
+              <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest px-3 mb-1.5">{sec.title}</p>
+              <div className="space-y-0.5">
+                {sec.items.map(item => {
+                  const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href + '/'))
+                  return (
+                    <Link key={item.href} href={item.href}
+                      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 group ${
+                        isActive
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm'
+                          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                      }`}>
+                      <span className={isActive ? 'text-emerald-600' : 'text-slate-400 group-hover:text-slate-600'}>
+                        {icons[item.icon] ?? icons.dashboard}
+                      </span>
+                      <span className="flex-1">{item.label}</span>
+                      {isActive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"/>}
+                    </Link>
+                  )
+                })}
+              </div>
+            </div>
+          ))
+        })()}
       </nav>
 
       {/* Logout */}

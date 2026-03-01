@@ -11,12 +11,12 @@ datasource db {
 }
 
 model Tenant {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   nome      String
-  slug      String   @unique
-  ativo     Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  slug      String    @unique
+  ativo     Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   users     User[]
   leads     Lead[]
   products  Product[]
@@ -34,7 +34,9 @@ model User {
   tenant    Tenant?  @relation(fields: [tenantId], references: [id])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  leadsAuditados Lead[] @relation("AuditadoPor")
+
+  leadsAuditados  Lead[]  @relation("AuditadoPor")
+  leadsCapturados Lead[]  @relation("CapturadoPor")
 }
 
 // ─────────────────────────────────────────────
@@ -55,31 +57,57 @@ model Product {
   updatedAt            DateTime @updatedAt
 }
 
+// ─────────────────────────────────────────────
+// LEAD — Funil de Vendas + Kanban
+// ─────────────────────────────────────────────
 model Lead {
-  id              String   @id @default(cuid())
-  /// Dados do cliente
+  id              String    @id @default(cuid())
+
+  // ── Dados do cliente ──────────────────────
   nomeCliente     String
   telefone        String?
   email           String?
-  /// Dados do veículo
-  veiculo         String   // ex: "Fiat Strada 2022"
-  placa           String   // texto digitado pela promotora
-  praca           String   // local/praça de captura
-  /// Foto da placa (URL)
+
+  // ── Tipo do lead ──────────────────────────
+  /// B2C | B2B
+  leadType        String    @default("B2C")
+
+  // ── B2C: dados veiculares ─────────────────
+  veiculo         String    @default("")
+  placa           String    @default("")
+  praca           String    @default("")
   platePhotoUrl   String?
-  /// Status da auditoria
+
+  // ── B2B: dados empresariais ───────────────
+  cnpj            String?
+  empresaNome     String?
+  frota           String?        // ex: "50 caminhões", "12 vans"
+  segmento        String?        // ex: "Transporte", "Mineração"
+
+  // ── Qualificação / dores ──────────────────
+  doresIdentificadas String?     // texto livre ou JSON stringify
+
+  // ── Estágio do Funil (Kanban) ─────────────
+  /// LEAD_COLETADO | IA_EM_ATENDIMENTO | REUNIAO_AGENDADA | CONVERTIDO
+  funnelStage     String    @default("LEAD_COLETADO")
+
+  // ── Auditoria de placa ────────────────────
   /// PENDENTE_AUDITORIA | AUDITADO_APROVADO | AUDITADO_REJEITADO
-  status          String   @default("PENDENTE_AUDITORIA")
+  status          String    @default("PENDENTE_AUDITORIA")
   motivoRejeicao  String?
-  /// Valores de comissão
-  commissionValue Float    @default(1.00)
-  /// Auditoria
+  commissionValue Float     @default(1.00)
   auditadoPorId   String?
-  auditadoPor     User?    @relation("AuditadoPor", fields: [auditadoPorId], references: [id])
+  auditadoPor     User?     @relation("AuditadoPor", fields: [auditadoPorId], references: [id])
   auditadoEm      DateTime?
-  /// Multi-tenant
+
+  // ── Promotor / captura ────────────────────
+  promotorId      String?
+  promotor        User?     @relation("CapturadoPor", fields: [promotorId], references: [id])
+
+  // ── Multi-tenant ──────────────────────────
   tenantId        String?
-  tenant          Tenant?  @relation(fields: [tenantId], references: [id])
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  tenant          Tenant?   @relation(fields: [tenantId], references: [id])
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 }
