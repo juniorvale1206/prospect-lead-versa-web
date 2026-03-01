@@ -23,7 +23,8 @@ export function getNavItems(role: Role): NavItem[] {
       { label: 'Configurações',          href: '/admin/configuracoes',           icon: 'settings',   section: 'Administração' },
       // Financeiro
       { label: 'Auditoria de Fotos',     href: '/financeiro/auditoria',          icon: 'audit',      section: 'Financeiro'    },
-      { label: 'Comissões',              href: '/financeiro/comissoes',          icon: 'commission', section: 'Financeiro'    },
+      { label: 'Comissões & KYC',        href: '/financeiro/comissoes',          icon: 'commission', section: 'Financeiro'    },
+      { label: 'Revisão KYC',            href: '/admin/kyc',                     icon: 'shield',     section: 'Financeiro'    },
     ]
   }
 
@@ -33,6 +34,7 @@ export function getNavItems(role: Role): NavItem[] {
       { label: 'Auditoria de Fotos',     href: '/financeiro/auditoria',          icon: 'audit',      section: 'Financeiro'  },
       { label: 'Kanban — Funil',         href: '/operacao',                      icon: 'kanban',     section: 'Operação'    },
       { label: 'Comissões',              href: '/financeiro/comissoes',          icon: 'commission', section: 'Financeiro'  },
+      { label: 'Revisão KYC',            href: '/admin/kyc',                     icon: 'shield',     section: 'Financeiro'  },
       { label: 'Extratos',               href: '/financeiro/extratos',           icon: 'extract',    section: 'Financeiro'  },
     ]
   }

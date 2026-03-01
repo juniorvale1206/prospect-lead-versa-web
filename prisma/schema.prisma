@@ -41,6 +41,21 @@ model User {
   approvedById    String?
   approvedAt      DateTime?
 
+  // ── KYC — documento de identidade ────────────────────────────────────────
+  /// URL da foto do documento (CPF/RG) enviada pelo promotor
+  cpfPhotoUrl     String?
+  /// PENDING_REVIEW | VERIFIED | REJECTED  (status do KYC)
+  kycStatus       String  @default("PENDING_REVIEW")
+  kycReviewedAt   DateTime?
+  kycNote         String?
+
+  // ── Dados bancários / Pix ─────────────────────────────────────────────────
+  /// CPF | EMAIL | TELEFONE | CNPJ | ALEATORIA
+  pixKeyType      String?
+  /// A chave Pix cadastrada pelo promotor
+  pixKey          String?
+  pixVerified     Boolean @default(false)
+
   tenantId  String?
   tenant    Tenant?  @relation(fields: [tenantId], references: [id])
   createdAt DateTime @default(now())
