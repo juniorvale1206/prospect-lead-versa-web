@@ -11,6 +11,14 @@ interface Tenant {
   slug: string
 }
 
+// Ciclos de cobrança disponíveis
+const CYCLE_OPTIONS = [
+  { value: 'QUARTERLY',      label: 'Trimestral',  icon: '🗓️',  desc: 'A cada 3 meses'  },
+  { value: 'SEMI_ANNUALLY',  label: 'Semestral',   icon: '📅',  desc: 'A cada 6 meses'  },
+  { value: 'ANNUALLY',       label: 'Anual',       icon: '📆',  desc: 'A cada 12 meses' },
+] as const
+type BillingCycle = typeof CYCLE_OPTIONS[number]['value']
+
 interface Product {
   id: string
   name: string
@@ -18,6 +26,10 @@ interface Product {
   description: string | null
   price: number
   commissionPercentage: number
+  setupFee: number
+  billingCycles: string[]
+  allowCreditCardInstallments: boolean
+  maxInstallments: number
   isActive: boolean
   tenantId: string | null
   tenant: Tenant | null
@@ -103,22 +115,29 @@ function ModalProduto({ product, tenants, onClose, onSaved }: ModalProdutoProps)
   const isEdit = !!product
 
   const [form, setForm] = useState({
-    name:                 product?.name                ?? '',
-    type:                 product?.type                ?? 'HARDWARE',
-    description:          product?.description         ?? '',
-    price:                product?.price               ?? 0,
-    commissionPercentage: product?.commissionPercentage ?? 30,
-    tenantId:             product?.tenantId             ?? '',
-    isActive:             product?.isActive             ?? true,
+    name:                        product?.name                        ?? '',
+    type:                        (product?.type                       ?? 'HARDWARE') as 'HARDWARE' | 'SUBSCRIPTION_PLAN',
+    description:                 product?.description                 ?? '',
+    price:                       product?.price                       ?? 0,
+    commissionPercentage:        product?.commissionPercentage        ?? 30,
+    tenantId:                    product?.tenantId                    ?? '',
+    isActive:                    product?.isActive                    ?? true,
+    // Campos específicos por tipo
+    setupFee:                    product?.setupFee                    ?? 0,
+    billingCycles:               (product?.billingCycles?.length
+                                    ? product.billingCycles
+                                    : ['QUARTERLY']) as BillingCycle[],
+    allowCreditCardInstallments: product?.allowCreditCardInstallments ?? false,
+    maxInstallments:             product?.maxInstallments             ?? 1,
   })
   const [errors, setErrors]   = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
 
-  // Foco no nome ao abrir
-  useEffect(() => { nameRef.current?.focus() }, [])
+  const isSubscription = form.type === 'SUBSCRIPTION_PLAN'
+  const isHardware     = form.type === 'HARDWARE'
 
-  // ESC fecha
+  useEffect(() => { nameRef.current?.focus() }, [])
   useEffect(() => {
     const fn = (e: KeyboardEvent) => { if (e.key === 'Escape' && !loading) onClose() }
     window.addEventListener('keydown', fn)
@@ -130,12 +149,46 @@ function ModalProduto({ product, tenants, onClose, onSaved }: ModalProdutoProps)
     setErrors(e => { const n = { ...e }; delete n[key]; return n })
   }
 
+  // Toggle de ciclo de cobrança para HARDWARE
+  function toggleCycle(cycle: BillingCycle) {
+    setForm(f => {
+      const has  = f.billingCycles.includes(cycle)
+      const next = has
+        ? f.billingCycles.filter(c => c !== cycle)
+        : [...f.billingCycles, cycle]
+      return { ...f, billingCycles: next }
+    })
+    setErrors(e => { const n = { ...e }; delete n.billingCycles; return n })
+  }
+
+  // Ao trocar o tipo, reseta campos específicos
+  function handleTypeChange(t: 'HARDWARE' | 'SUBSCRIPTION_PLAN') {
+    setForm(f => ({
+      ...f,
+      type: t,
+      // Reset condicionais — cast explícito para BillingCycle[] para satisfazer o TypeScript
+      setupFee:      t === 'SUBSCRIPTION_PLAN' ? f.setupFee : 0,
+      billingCycles: (t === 'HARDWARE'
+        ? (f.billingCycles.length ? f.billingCycles : ['QUARTERLY' as BillingCycle])
+        : [] as BillingCycle[]),
+    }))
+    setErrors({})
+  }
+
   function validate() {
     const errs: Record<string, string> = {}
-    if (!form.name.trim())                    errs.name  = 'Nome é obrigatório'
-    if (form.price < 0)                       errs.price = 'Preço não pode ser negativo'
+    if (!form.name.trim())
+      errs.name = 'Nome é obrigatório'
+    if (form.price < 0)
+      errs.price = 'Preço não pode ser negativo'
     if (form.commissionPercentage < 0 || form.commissionPercentage > 100)
       errs.commissionPercentage = 'Comissão deve ser entre 0% e 100%'
+    // SUBSCRIPTION_PLAN: setupFee obrigatório
+    if (isSubscription && (form.setupFee === undefined || form.setupFee === null || isNaN(form.setupFee)))
+      errs.setupFee = 'Valor de instalação/adesão é obrigatório'
+    // HARDWARE: ao menos 1 ciclo selecionado
+    if (isHardware && form.billingCycles.length === 0)
+      errs.billingCycles = 'Selecione ao menos um ciclo de assinatura obrigatória'
     return errs
   }
 
@@ -148,18 +201,33 @@ function ModalProduto({ product, tenants, onClose, onSaved }: ModalProdutoProps)
     try {
       const url    = isEdit ? `/api/products/${product!.id}` : '/api/products'
       const method = isEdit ? 'PATCH' : 'POST'
-      const res    = await fetch(url, {
+
+      const payload = {
+        name:                        form.name.trim(),
+        type:                        form.type,
+        description:                 form.description || null,
+        price:                       Number(form.price),
+        commissionPercentage:        Number(form.commissionPercentage),
+        tenantId:                    form.tenantId || null,
+        isActive:                    form.isActive,
+        // Campos condicionais
+        setupFee:                    isSubscription ? Number(form.setupFee) : 0,
+        billingCycles:               isHardware
+                                       ? form.billingCycles
+                                       : ['MONTHLY'],
+        allowCreditCardInstallments: form.allowCreditCardInstallments,
+        maxInstallments:             Number(form.maxInstallments),
+      }
+
+      const res  = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...form,
-          tenantId: form.tenantId || null,
-          price: Number(form.price),
-          commissionPercentage: Number(form.commissionPercentage),
-        }),
+        body: JSON.stringify(payload),
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Erro desconhecido')
+      if (!res.ok) throw new Error(
+        typeof data.error === 'object' ? data.error.message : (data.error || 'Erro desconhecido')
+      )
       onSaved(data.product, !isEdit)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Erro ao salvar produto'
@@ -169,52 +237,61 @@ function ModalProduto({ product, tenants, onClose, onSaved }: ModalProdutoProps)
     }
   }
 
-  // Preview da comissão em tempo real
   const previewComm = commissionValue(Number(form.price), Number(form.commissionPercentage))
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(4px)' }}
+      style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(4px)' }}
       onClick={e => { if (e.target === e.currentTarget && !loading) onClose() }}
     >
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[95vh] overflow-hidden flex flex-col">
 
-        {/* Cabeçalho */}
+        {/* ── Cabeçalho ─────────────────────────────────────────────────── */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-100">
           <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isEdit ? 'bg-amber-100' : 'bg-blue-100'}`}>
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center
+              ${isEdit ? 'bg-amber-100' : isSubscription ? 'bg-purple-100' : 'bg-blue-100'}`}>
               {isEdit
                 ? <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-                : <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4"/></svg>
+                : isSubscription
+                  ? <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                  : <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4"/></svg>
               }
             </div>
             <div>
               <h2 className="text-base font-bold text-slate-800">{isEdit ? 'Editar Produto' : 'Novo Produto'}</h2>
-              <p className="text-slate-400 text-xs">{isEdit ? `ID: ${product!.id.slice(0, 10)}…` : 'Preencha os dados abaixo'}</p>
+              <p className="text-slate-400 text-xs">
+                {isEdit ? `ID: ${product!.id.slice(0, 10)}…` : (
+                  isSubscription ? 'Plano de Assinatura — campos de recorrência' : 'Hardware / Equipamento físico'
+                )}
+              </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            disabled={loading}
-            className="w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-all disabled:opacity-40"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>
+          <button onClick={onClose} disabled={loading}
+            className="w-9 h-9 flex items-center justify-center rounded-xl text-slate-400
+              hover:bg-slate-100 hover:text-slate-600 transition-all disabled:opacity-40">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/>
+            </svg>
           </button>
         </div>
 
-        {/* Formulário com scroll */}
+        {/* ── Formulário com scroll ──────────────────────────────────────── */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-5">
 
           {/* Erro global */}
           {errors._global && (
             <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center gap-2">
-              <svg className="w-4 h-4 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+              <svg className="w-4 h-4 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+              </svg>
               <p className="text-red-700 text-sm font-medium">{errors._global}</p>
             </div>
           )}
 
-          {/* Nome */}
+          {/* ── Nome ─────────────────────────────────────────────────────── */}
           <div>
             <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
               Nome do Produto <span className="text-red-500">*</span>
@@ -224,7 +301,7 @@ function ModalProduto({ product, tenants, onClose, onSaved }: ModalProdutoProps)
               type="text"
               value={form.name}
               onChange={e => setField('name', e.target.value)}
-              placeholder="Ex: Antifurto Partida Remota"
+              placeholder={isSubscription ? 'Ex: Plano Telemetria Premium Mensal' : 'Ex: Módulo Rastreador GT-500'}
               className={`w-full px-4 py-3 bg-slate-50 border rounded-xl text-slate-800 placeholder-slate-400
                 focus:outline-none focus:ring-2 focus:bg-white transition-all text-sm
                 ${errors.name ? 'border-red-300 focus:ring-red-200' : 'border-slate-200 focus:ring-blue-200 focus:border-blue-300'}`}
@@ -232,36 +309,42 @@ function ModalProduto({ product, tenants, onClose, onSaved }: ModalProdutoProps)
             {errors.name && <p className="text-red-500 text-xs mt-1 font-medium">{errors.name}</p>}
           </div>
 
-          {/* Tipo */}
+          {/* ── Tipo — seletor visual ─────────────────────────────────────── */}
           <div>
             <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
               Tipo <span className="text-red-500">*</span>
             </label>
             <div className="grid grid-cols-2 gap-3">
               {(['HARDWARE', 'SUBSCRIPTION_PLAN'] as const).map(t => {
-                const cfg = TYPE_LABELS[t]
+                const cfg     = TYPE_LABELS[t]
+                const isActive = form.type === t
                 return (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setField('type', t)}
-                    className={`flex items-center gap-2.5 px-4 py-3 rounded-xl border-2 transition-all text-left
-                      ${form.type === t
+                  <button key={t} type="button" onClick={() => handleTypeChange(t)}
+                    className={`flex flex-col items-start gap-1 px-4 py-3.5 rounded-xl border-2 transition-all text-left
+                      ${isActive
                         ? t === 'HARDWARE'
-                          ? 'border-blue-500 bg-blue-50 text-blue-800'
-                          : 'border-purple-500 bg-purple-50 text-purple-800'
-                        : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300'
-                      }`}
-                  >
-                    <span className="text-xl">{cfg.icon}</span>
-                    <span className="text-sm font-bold">{cfg.label}</span>
+                          ? 'border-blue-500 bg-blue-50'
+                          : 'border-purple-500 bg-purple-50'
+                        : 'border-slate-200 bg-slate-50 hover:border-slate-300'
+                      }`}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">{cfg.icon}</span>
+                      <span className={`text-sm font-bold ${
+                        isActive ? (t === 'HARDWARE' ? 'text-blue-800' : 'text-purple-800') : 'text-slate-600'
+                      }`}>{cfg.label}</span>
+                    </div>
+                    <p className={`text-[11px] ${
+                      isActive ? (t === 'HARDWARE' ? 'text-blue-600' : 'text-purple-600') : 'text-slate-400'
+                    }`}>
+                      {t === 'HARDWARE' ? 'Venda única + assinatura obrigatória' : 'Recorrência mensal com taxa de adesão'}
+                    </p>
                   </button>
                 )
               })}
             </div>
           </div>
 
-          {/* Descrição */}
+          {/* ── Descrição ─────────────────────────────────────────────────── */}
           <div>
             <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
               Descrição <span className="text-slate-400 font-normal">(opcional)</span>
@@ -271,78 +354,254 @@ function ModalProduto({ product, tenants, onClose, onSaved }: ModalProdutoProps)
               onChange={e => setField('description', e.target.value)}
               placeholder="Detalhe funcionalidades ou condições do produto…"
               rows={2}
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 placeholder-slate-400
-                focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300 focus:bg-white transition-all text-sm resize-none"
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-700
+                placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-200
+                focus:border-blue-300 focus:bg-white transition-all text-sm resize-none"
             />
           </div>
 
-          {/* Preço + Comissão lado a lado */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
-                Preço Base (R$) <span className="text-red-500">*</span>
-              </label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">R$</span>
-                <input
-                  type="number"
-                  min={0}
-                  step={0.01}
-                  value={form.price}
-                  onChange={e => setField('price', parseFloat(e.target.value) || 0)}
-                  className={`w-full pl-9 pr-4 py-3 bg-slate-50 border rounded-xl text-slate-800
-                    focus:outline-none focus:ring-2 focus:bg-white transition-all text-sm
-                    ${errors.price ? 'border-red-300 focus:ring-red-200' : 'border-slate-200 focus:ring-blue-200 focus:border-blue-300'}`}
-                />
-              </div>
-              {errors.price && <p className="text-red-500 text-xs mt-1">{errors.price}</p>}
-            </div>
+          {/* ══════════════════════════════════════════════════════════════
+              CAMPOS CONDICIONAIS POR TIPO
+          ══════════════════════════════════════════════════════════════ */}
 
-            <div>
-              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
-                Comissão (%) <span className="text-red-500">*</span>
-              </label>
-              <div className="relative">
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={0.5}
-                  value={form.commissionPercentage}
-                  onChange={e => setField('commissionPercentage', parseFloat(e.target.value) || 0)}
-                  className={`w-full pl-4 pr-9 py-3 bg-slate-50 border rounded-xl text-slate-800
-                    focus:outline-none focus:ring-2 focus:bg-white transition-all text-sm
-                    ${errors.commissionPercentage ? 'border-red-300 focus:ring-red-200' : 'border-slate-200 focus:ring-blue-200 focus:border-blue-300'}`}
-                />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">%</span>
+          {/* ── SUBSCRIPTION_PLAN: Mensalidade + Adesão ─────────────────── */}
+          {isSubscription && (
+            <>
+              {/* Banner indicador */}
+              <div className="flex items-center gap-2 bg-purple-50 border border-purple-200 rounded-xl px-4 py-2.5">
+                <svg className="w-4 h-4 text-purple-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+                <p className="text-purple-700 text-xs font-semibold">
+                  Plano de Assinatura — configure mensalidade e taxa de instalação
+                </p>
               </div>
-              {errors.commissionPercentage && <p className="text-red-500 text-xs mt-1">{errors.commissionPercentage}</p>}
+
+              {/* Mensalidade + Adesão lado a lado */}
+              <div className="grid grid-cols-2 gap-4">
+                {/* Mensalidade */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
+                    Valor da Mensalidade (R$) <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">R$</span>
+                    <input type="number" min={0} step={0.01}
+                      value={form.price}
+                      onChange={e => setField('price', parseFloat(e.target.value) || 0)}
+                      className={`w-full pl-9 pr-4 py-3 bg-slate-50 border rounded-xl text-slate-800
+                        focus:outline-none focus:ring-2 focus:bg-white transition-all text-sm
+                        ${errors.price ? 'border-red-300 focus:ring-red-200' : 'border-slate-200 focus:ring-purple-200 focus:border-purple-300'}`}
+                    />
+                  </div>
+                  {errors.price && <p className="text-red-500 text-xs mt-1">{errors.price}</p>}
+                  <p className="text-slate-400 text-[11px] mt-1">Valor recorrente por mês</p>
+                </div>
+
+                {/* Taxa de Adesão / Instalação */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
+                    Valor de Instalação / Adesão (R$) <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">R$</span>
+                    <input type="number" min={0} step={0.01}
+                      value={form.setupFee}
+                      onChange={e => setField('setupFee', parseFloat(e.target.value) || 0)}
+                      className={`w-full pl-9 pr-4 py-3 bg-slate-50 border rounded-xl text-slate-800
+                        focus:outline-none focus:ring-2 focus:bg-white transition-all text-sm
+                        ${errors.setupFee ? 'border-red-300 focus:ring-red-200' : 'border-slate-200 focus:ring-purple-200 focus:border-purple-300'}`}
+                    />
+                  </div>
+                  {errors.setupFee && <p className="text-red-500 text-xs mt-1">{errors.setupFee}</p>}
+                  <p className="text-slate-400 text-[11px] mt-1">Cobrado 1× no ato da adesão</p>
+                </div>
+              </div>
+
+              {/* Parcelamento do cartão */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-bold text-slate-700">Permite parcelamento no cartão</p>
+                    <p className="text-xs text-slate-400">Habilitar parcelamento da taxa de adesão</p>
+                  </div>
+                  <button type="button"
+                    onClick={() => setField('allowCreditCardInstallments', !form.allowCreditCardInstallments)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      form.allowCreditCardInstallments ? 'bg-purple-500' : 'bg-slate-300'
+                    }`}>
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+                      form.allowCreditCardInstallments ? 'translate-x-6' : 'translate-x-1'
+                    }`}/>
+                  </button>
+                </div>
+                {form.allowCreditCardInstallments && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                      Máximo de Parcelas
+                    </label>
+                    <select
+                      value={form.maxInstallments}
+                      onChange={e => setField('maxInstallments', parseInt(e.target.value))}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm text-slate-700
+                        focus:outline-none focus:ring-2 focus:ring-purple-200">
+                      {[1,2,3,4,5,6,7,8,9,10,12,18,24].map(n => (
+                        <option key={n} value={n}>{n}× {n === 1 ? '(à vista)' : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* ── HARDWARE: Valor de venda + Ciclos obrigatórios ────────────── */}
+          {isHardware && (
+            <>
+              {/* Banner indicador */}
+              <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
+                <svg className="w-4 h-4 text-blue-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/>
+                </svg>
+                <p className="text-blue-700 text-xs font-semibold">
+                  Equipamento físico — obriga assinatura de plataforma após a venda
+                </p>
+              </div>
+
+              {/* Valor de Venda */}
+              <div>
+                <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
+                  Valor de Venda do Equipamento (R$) <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">R$</span>
+                  <input type="number" min={0} step={0.01}
+                    value={form.price}
+                    onChange={e => setField('price', parseFloat(e.target.value) || 0)}
+                    className={`w-full pl-9 pr-4 py-3 bg-slate-50 border rounded-xl text-slate-800
+                      focus:outline-none focus:ring-2 focus:bg-white transition-all text-sm
+                      ${errors.price ? 'border-red-300 focus:ring-red-200' : 'border-slate-200 focus:ring-blue-200 focus:border-blue-300'}`}
+                  />
+                </div>
+                {errors.price && <p className="text-red-500 text-xs mt-1">{errors.price}</p>}
+              </div>
+
+              {/* Ciclos de Assinatura Obrigatória */}
+              <div>
+                <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
+                  Obrigar Assinatura de Plataforma <span className="text-red-500">*</span>
+                  <span className="ml-1 font-normal text-slate-400 normal-case">
+                    — marque os ciclos permitidos
+                  </span>
+                </label>
+
+                <div className="space-y-2">
+                  {CYCLE_OPTIONS.map(opt => {
+                    const checked = form.billingCycles.includes(opt.value)
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => toggleCycle(opt.value)}
+                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 transition-all text-left
+                          ${checked
+                            ? 'border-blue-400 bg-blue-50'
+                            : 'border-slate-200 bg-slate-50 hover:border-slate-300'
+                          }`}
+                      >
+                        {/* Checkbox visual */}
+                        <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition-all
+                          ${checked
+                            ? 'border-blue-500 bg-blue-500'
+                            : 'border-slate-300 bg-white'
+                          }`}>
+                          {checked && (
+                            <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7"/>
+                            </svg>
+                          )}
+                        </div>
+                        <span className="text-lg">{opt.icon}</span>
+                        <div className="flex-1">
+                          <p className={`text-sm font-bold ${
+                            checked ? 'text-blue-800' : 'text-slate-700'
+                          }`}>{opt.label}</p>
+                          <p className={`text-xs ${checked ? 'text-blue-500' : 'text-slate-400'}`}>
+                            {opt.desc}
+                          </p>
+                        </div>
+                        {checked && (
+                          <span className="text-xs font-bold text-blue-600 bg-blue-100
+                            px-2 py-0.5 rounded-full border border-blue-200">
+                            Habilitado
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {errors.billingCycles && (
+                  <p className="text-red-500 text-xs mt-1.5 flex items-center gap-1 font-medium">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                    </svg>
+                    {errors.billingCycles}
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* ── Comissão (campo comum a ambos) ─────────────────────────── */}
+          <div>
+            <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
+              Comissão do Promotor (%) <span className="text-red-500">*</span>
+            </label>
+            <div className="relative">
+              <input type="number" min={0} max={100} step={0.5}
+                value={form.commissionPercentage}
+                onChange={e => setField('commissionPercentage', parseFloat(e.target.value) || 0)}
+                className={`w-full pl-4 pr-9 py-3 bg-slate-50 border rounded-xl text-slate-800
+                  focus:outline-none focus:ring-2 focus:bg-white transition-all text-sm
+                  ${errors.commissionPercentage ? 'border-red-300 focus:ring-red-200' : 'border-slate-200 focus:ring-blue-200 focus:border-blue-300'}`}
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">%</span>
             </div>
+            {errors.commissionPercentage && <p className="text-red-500 text-xs mt-1">{errors.commissionPercentage}</p>}
           </div>
 
-          {/* Preview da comissão em tempo real */}
+          {/* ── Preview da comissão ─────────────────────────────────────── */}
           <div className={`rounded-2xl px-5 py-4 border transition-all ${
-            previewComm > 0
-              ? 'bg-emerald-50 border-emerald-200'
-              : 'bg-slate-50 border-slate-200'
+            previewComm > 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'
           }`}>
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">💰 Preview da Comissão</p>
                 <p className="text-slate-400 text-xs mt-0.5">
                   {fmtBRL(Number(form.price))} × {Number(form.commissionPercentage)}%
+                  {isSubscription && form.setupFee > 0 && (
+                    <span className="ml-2 text-purple-500">
+                      + Adesão {fmtBRL(form.setupFee)}
+                    </span>
+                  )}
                 </p>
               </div>
               <div className="text-right">
                 <p className={`text-2xl font-black ${previewComm > 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
                   {fmtBRL(previewComm)}
                 </p>
-                <p className="text-xs text-slate-400">por venda</p>
+                <p className="text-xs text-slate-400">
+                  {isSubscription ? 'por mês' : 'por venda'}
+                </p>
               </div>
             </div>
           </div>
 
-          {/* Franquia / Tenant */}
+          {/* ── Franquia / Tenant ──────────────────────────────────────── */}
           <div>
             <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
               Franquia (Tenant)
@@ -363,19 +622,16 @@ function ModalProduto({ product, tenants, onClose, onSaved }: ModalProdutoProps)
             </p>
           </div>
 
-          {/* Status ativo */}
+          {/* ── Status ativo ───────────────────────────────────────────── */}
           <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
             <div>
               <p className="text-sm font-bold text-slate-700">Produto Ativo</p>
               <p className="text-xs text-slate-400">Produtos inativos não aparecem no PDV</p>
             </div>
-            <button
-              type="button"
-              onClick={() => setField('isActive', !form.isActive)}
+            <button type="button" onClick={() => setField('isActive', !form.isActive)}
               className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                 form.isActive ? 'bg-emerald-500' : 'bg-slate-300'
-              }`}
-            >
+              }`}>
               <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
                 form.isActive ? 'translate-x-6' : 'translate-x-1'
               }`}/>
@@ -383,31 +639,30 @@ function ModalProduto({ product, tenants, onClose, onSaved }: ModalProdutoProps)
           </div>
         </form>
 
-        {/* Footer */}
+        {/* ── Footer ──────────────────────────────────────────────────────── */}
         <div className="px-6 py-5 border-t border-slate-100 bg-slate-50/60 flex gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={loading}
+          <button type="button" onClick={onClose} disabled={loading}
             className="flex-1 py-3 border border-slate-200 rounded-xl text-slate-600 font-semibold text-sm
-              hover:bg-slate-100 transition-all disabled:opacity-50"
-          >
+              hover:bg-slate-100 transition-all disabled:opacity-50">
             Cancelar
           </button>
-          <button
-            onClick={handleSubmit}
-            disabled={loading}
-            className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-xl
-              transition-all shadow-md shadow-blue-200 hover:shadow-blue-300 disabled:opacity-50 disabled:cursor-not-allowed
-              flex items-center justify-center gap-2"
-          >
+          <button onClick={handleSubmit} disabled={loading}
+            className={`flex-1 py-3 text-white font-bold text-sm rounded-xl transition-all
+              shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2
+              ${isSubscription
+                ? 'bg-purple-600 hover:bg-purple-700 shadow-purple-200 hover:shadow-purple-300'
+                : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200 hover:shadow-blue-300'
+              }`}>
             {loading ? (
               <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
               </svg>
             ) : (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={isEdit ? 'M5 13l4 4L19 7' : 'M12 4v16m8-8H4'}/></svg>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d={isEdit ? 'M5 13l4 4L19 7' : 'M12 4v16m8-8H4'}/>
+              </svg>
             )}
             {loading ? 'Salvando…' : isEdit ? 'Salvar Alterações' : 'Criar Produto'}
           </button>
@@ -783,7 +1038,7 @@ export default function ProdutosClient() {
                     { label: 'Produto',              w: '' },
                     { label: 'Tipo',                 w: 'w-40' },
                     { label: 'Franquia',             w: 'w-36' },
-                    { label: 'Preço Base',           w: 'w-32' },
+                    { label: 'Preço / Adesão',       w: 'w-40' },
                     { label: 'Comissão %',           w: 'w-28' },
                     { label: '💰 Valor Comissão',    w: 'w-36' },
                     { label: 'Status',               w: 'w-24' },
@@ -857,9 +1112,25 @@ export default function ProdutosClient() {
                             }
                           </td>
 
-                          {/* Preço */}
+                          {/* Preço + Adesão + Ciclos */}
                           <td className="px-5 py-4">
-                            <span className="text-slate-800 font-bold text-sm">{fmtBRL(p.price)}</span>
+                            <div className="space-y-1">
+                              <span className="text-slate-800 font-bold text-sm">{fmtBRL(p.price)}</span>
+                              {p.type === 'SUBSCRIPTION_PLAN' && (p as Product & { setupFee?: number }).setupFee !== undefined && (
+                                <p className="text-purple-600 text-xs font-medium">
+                                  + Adesão {fmtBRL((p as Product & { setupFee?: number }).setupFee ?? 0)}
+                                </p>
+                              )}
+                              {p.type === 'HARDWARE' && Array.isArray((p as Product & { billingCycles?: string[] }).billingCycles) && (
+                                <div className="flex flex-wrap gap-1">
+                                  {((p as Product & { billingCycles?: string[] }).billingCycles ?? []).map((c: string) => (
+                                    <span key={c} className="text-[10px] font-bold px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-md border border-blue-200">
+                                      {c === 'QUARTERLY' ? '3M' : c === 'SEMI_ANNUALLY' ? '6M' : c === 'ANNUALLY' ? '12M' : c}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           </td>
 
                           {/* % Comissão */}

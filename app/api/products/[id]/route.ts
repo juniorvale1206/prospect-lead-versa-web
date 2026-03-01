@@ -170,7 +170,24 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     if (!cycles) {
       return err(`billingCycles inválido. Use: ${VALID_CYCLES.join(', ')}`, 400)
     }
+    // Se está atualizando um HARDWARE, valida que há ao menos um ciclo válido
+    const nextType = (data.type as string) ?? existing.type
+    if (nextType === 'HARDWARE') {
+      const HARDWARE_CYCLES = ['QUARTERLY', 'SEMI_ANNUALLY', 'ANNUALLY', 'ONE_TIME']
+      if (!cycles.some(c => HARDWARE_CYCLES.includes(c))) {
+        return err('Hardware exige ao menos um ciclo: QUARTERLY, SEMI_ANNUALLY ou ANNUALLY.', 400)
+      }
+    }
     data.billingCycles = JSON.stringify(cycles)
+  }
+
+  // Valida setupFee para SUBSCRIPTION_PLAN
+  const nextType = (data.type as string) ?? existing.type
+  if (nextType === 'SUBSCRIPTION_PLAN' && data.setupFee !== undefined) {
+    const sf = data.setupFee as number
+    if (typeof sf !== 'number' || sf < 0) {
+      return err('setupFee (Valor de Instalação/Adesão) deve ser um número >= 0.', 400)
+    }
   }
 
   const raw = await prisma.product.update({

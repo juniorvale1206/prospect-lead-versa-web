@@ -206,6 +206,37 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // ── Validação específica por tipo ──────────────────────────────────────────
+  //
+  //  SUBSCRIPTION_PLAN:
+  //    - setupFee: obrigatório e >= 0 (taxa de instalação)
+  //    - billingCycles: forçado para ['MONTHLY'] (mensalidade fixa)
+  //
+  //  HARDWARE:
+  //    - billingCycles: ao menos 1 ciclo entre QUARTERLY, SEMI_ANNUALLY, ANNUALLY
+  //    - setupFee: não se aplica (zero)
+  //
+  if (type === 'SUBSCRIPTION_PLAN') {
+    if (setup === null || setup === undefined || isNaN(Number(setup)) || Number(setup) < 0) {
+      return err(
+        'Para Planos de Assinatura, o campo setupFee (Valor de Instalação/Adesão) é obrigatório e deve ser >= 0.',
+        400, 'VALIDATION_ERROR',
+      )
+    }
+  }
+
+  if (type === 'HARDWARE') {
+    const hwCycles = cycles ?? []
+    const HARDWARE_CYCLES = ['QUARTERLY', 'SEMI_ANNUALLY', 'ANNUALLY', 'ONE_TIME']
+    const hasValidCycle   = hwCycles.some(c => HARDWARE_CYCLES.includes(c))
+    if (!hasValidCycle) {
+      return err(
+        'Hardware exige ao menos um ciclo de assinatura: QUARTERLY, SEMI_ANNUALLY ou ANNUALLY.',
+        400, 'VALIDATION_ERROR',
+      )
+    }
+  }
+
   // ── Tenant guard ─────────────────────────────────────────────────────────
   // MANAGER e TEAM_LEADER só podem criar produtos no seu próprio tenant
   let effectiveTenantId = (tenantId as string) || null
