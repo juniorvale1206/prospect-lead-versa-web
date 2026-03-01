@@ -1,0 +1,99 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { jwtVerify } from 'jose'
+
+const JWT_SECRET = new TextEncoder().encode(
+  process.env.JWT_SECRET || 'prospeclead-super-secret-key-2024'
+)
+
+interface JWTPayload {
+  userId: string
+  email: string
+  nome: string
+  role: 'ADMIN_MASTER' | 'FINANCIAL' | 'MANAGER'
+  tenantId: string | null
+}
+
+async function getPayload(token: string): Promise<JWTPayload | null> {
+  try {
+    const { payload } = await jwtVerify(token, JWT_SECRET)
+    return payload as unknown as JWTPayload
+  } catch {
+    return null
+  }
+}
+
+export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl
+  const token = request.cookies.get('prospeclead-token')?.value
+
+  // Rotas públicas - não precisa de autenticação
+  const publicRoutes = ['/login', '/api/auth/login']
+  if (publicRoutes.some((route) => pathname.startsWith(route))) {
+    // Se já está logado e tenta acessar login, redirecionar para dashboard
+    if (pathname === '/login' && token) {
+      const payload = await getPayload(token)
+      if (payload) {
+        if (payload.role === 'ADMIN_MASTER') return NextResponse.redirect(new URL('/dashboard', request.url))
+        if (payload.role === 'FINANCIAL') return NextResponse.redirect(new URL('/financeiro', request.url))
+        return NextResponse.redirect(new URL('/operacao', request.url))
+      }
+    }
+    return NextResponse.next()
+  }
+
+  // Verificar se está autenticado
+  if (!token) {
+    return NextResponse.redirect(new URL('/login', request.url))
+  }
+
+  const payload = await getPayload(token)
+  if (!payload) {
+    const response = NextResponse.redirect(new URL('/login', request.url))
+    response.cookies.delete('prospeclead-token')
+    return response
+  }
+
+  const role = payload.role
+
+  // /admin/* → apenas ADMIN_MASTER
+  if (pathname.startsWith('/admin')) {
+    if (role !== 'ADMIN_MASTER') {
+      return NextResponse.redirect(new URL('/acesso-negado', request.url))
+    }
+  }
+
+  // /financeiro/* → ADMIN_MASTER ou FINANCIAL
+  if (pathname.startsWith('/financeiro')) {
+    if (role !== 'ADMIN_MASTER' && role !== 'FINANCIAL') {
+      return NextResponse.redirect(new URL('/acesso-negado', request.url))
+    }
+  }
+
+  // /dashboard → apenas ADMIN_MASTER
+  if (pathname.startsWith('/dashboard')) {
+    if (role !== 'ADMIN_MASTER') {
+      if (role === 'FINANCIAL') return NextResponse.redirect(new URL('/financeiro', request.url))
+      return NextResponse.redirect(new URL('/operacao', request.url))
+    }
+  }
+
+  // /operacao/* → qualquer usuário logado
+  // Adicionar o usuário ao header para uso nas páginas
+  const requestHeaders = new Headers(request.headers)
+  requestHeaders.set('x-user-id', payload.userId)
+  requestHeaders.set('x-user-email', payload.email)
+  requestHeaders.set('x-user-role', payload.role)
+  requestHeaders.set('x-user-nome', payload.nome)
+
+  return NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  })
+}
+
+export const config = {
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|api/auth/login|api/auth/logout).*)',
+  ],
+}

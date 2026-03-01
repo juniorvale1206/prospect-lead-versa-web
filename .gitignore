@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.npm
+
+# Next.js
+.next/
+out/
+build/
+
+# Prisma - manter o banco local
+prisma/dev.db
+prisma/dev.db-journal
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+.pm2/
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
