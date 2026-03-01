@@ -3,10 +3,9 @@ import { getSession } from '@/lib/auth'
 import Sidebar from '@/components/sidebar/Sidebar'
 import Header from '@/components/sidebar/Header'
 
-export default async function FinanceiroLayout({ children }: { children: React.ReactNode }) {
+async function AppShell({ children }: { children: React.ReactNode }) {
   const session = await getSession()
   if (!session) redirect('/login')
-  if (session.role !== 'ADMIN_MASTER' && session.role !== 'FINANCIAL') redirect('/acesso-negado')
   return (
     <div className="flex min-h-screen bg-slate-50">
       <Sidebar user={{ email: session.email, nome: session.nome, role: session.role, tenantNome: session.tenantNome }} />
@@ -17,3 +16,5 @@ export default async function FinanceiroLayout({ children }: { children: React.R
     </div>
   )
 }
+
+export default AppShell

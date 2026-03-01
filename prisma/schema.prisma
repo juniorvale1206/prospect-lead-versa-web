@@ -1,5 +1,5 @@
-// This is your Prisma schema file
-// SQLite compatible - roles como String
+// Schema Prisma - ProspecLead SaaS Multi-Tenant
+// SQLite compatible (roles e status como String)
 
 generator client {
   provider = "prisma-client-js"
@@ -18,6 +18,7 @@ model Tenant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   users     User[]
+  leads     Lead[]
 }
 
 model User {
@@ -32,4 +33,34 @@ model User {
   tenant    Tenant?  @relation(fields: [tenantId], references: [id])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  leadsAuditados Lead[] @relation("AuditadoPor")
+}
+
+model Lead {
+  id              String   @id @default(cuid())
+  /// Dados do cliente
+  nomeCliente     String
+  telefone        String?
+  email           String?
+  /// Dados do veículo
+  veiculo         String   // ex: "Fiat Strada 2022"
+  placa           String   // texto digitado pela promotora
+  praca           String   // local/praça de captura
+  /// Foto da placa (URL)
+  platePhotoUrl   String?
+  /// Status da auditoria
+  /// PENDENTE_AUDITORIA | AUDITADO_APROVADO | AUDITADO_REJEITADO
+  status          String   @default("PENDENTE_AUDITORIA")
+  motivoRejeicao  String?
+  /// Valores de comissão
+  commissionValue Float    @default(1.00)
+  /// Auditoria
+  auditadoPorId   String?
+  auditadoPor     User?    @relation("AuditadoPor", fields: [auditadoPorId], references: [id])
+  auditadoEm      DateTime?
+  /// Multi-tenant
+  tenantId        String?
+  tenant          Tenant?  @relation(fields: [tenantId], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
