@@ -26,9 +26,11 @@ const icons: Record<string, JSX.Element> = {
 }
 
 const roleMeta: Record<Role, { label: string; bg: string; text: string; dot: string }> = {
-  ADMIN_MASTER: { label: 'Admin Master', bg: 'bg-purple-100', text: 'text-purple-700', dot: 'bg-purple-500' },
-  FINANCIAL:    { label: 'Financeiro',   bg: 'bg-blue-100',   text: 'text-blue-700',   dot: 'bg-blue-500' },
-  MANAGER:      { label: 'Gestor',       bg: 'bg-emerald-100',text: 'text-emerald-700',dot: 'bg-emerald-500' },
+  ADMIN_MASTER:     { label: 'Admin Master',  bg: 'bg-purple-100',  text: 'text-purple-700',  dot: 'bg-purple-500'  },
+  FINANCIAL:        { label: 'Financeiro',    bg: 'bg-blue-100',    text: 'text-blue-700',    dot: 'bg-blue-500'    },
+  MANAGER:          { label: 'Gestor',        bg: 'bg-emerald-100', text: 'text-emerald-700', dot: 'bg-emerald-500' },
+  PROMOTER:         { label: 'Promotor',      bg: 'bg-amber-100',   text: 'text-amber-700',   dot: 'bg-amber-500'   },
+  PARTNER_EMPLOYEE: { label: 'Parceiro PDV',  bg: 'bg-violet-100',  text: 'text-violet-700',  dot: 'bg-violet-500'  },
 }
 
 export default function Sidebar({ user }: SidebarProps) {
@@ -36,7 +38,7 @@ export default function Sidebar({ user }: SidebarProps) {
   const router   = useRouter()
   const [loggingOut, setLoggingOut] = useState(false)
   const navItems = getNavItems(user.role)
-  const meta     = roleMeta[user.role]
+  const meta     = roleMeta[user.role] ?? { label: user.role, bg: 'bg-slate-100', text: 'text-slate-700', dot: 'bg-slate-500' }
 
   async function handleLogout() {
     setLoggingOut(true)

@@ -723,7 +723,7 @@ export default function KanbanClient({ userRole, userTenantId, userName }: Kanba
         setTenants(t => {
           const merged = new Map(t.map(x => [x.id, x]))
           map.forEach((v, k) => merged.set(k, v))
-          return [...merged.values()]
+          return Array.from(merged.values())
         })
       }
     } catch {

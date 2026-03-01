@@ -24,6 +24,8 @@
  *   401  INVALID_CREDENTIALS — usuário não existe ou senha errada
  *   403  ROLE_NOT_ALLOWED — role não autorizado para o app mobile
  *   403  ACCOUNT_INACTIVE — conta desativada
+ *   403  APPROVAL_PENDING — cadastro aguardando aprovação do gestor
+ *   403  APPROVAL_REJECTED — cadastro rejeitado pelo gestor
  */
 
 import { NextRequest }      from 'next/server'
@@ -94,6 +96,27 @@ export async function POST(req: NextRequest) {
         'ACCOUNT_INACTIVE',
         403,
       )
+    }
+
+    /* ── 5b. Verificar approvalStatus (somente para PROMOTER / PARTNER_EMPLOYEE) ── */
+    if (['PROMOTER', 'PARTNER_EMPLOYEE'].includes(user.role)) {
+      const approvalStatus = (user as { approvalStatus?: string }).approvalStatus ?? 'APPROVED'
+
+      if (approvalStatus === 'PENDING') {
+        return mobileError(
+          'Seu cadastro está em análise. Aguarde a liberação do seu gestor.',
+          'APPROVAL_PENDING',
+          403,
+        )
+      }
+
+      if (approvalStatus === 'REJECTED') {
+        return mobileError(
+          'Cadastro não aprovado. Entre em contato com o responsável da sua franquia.',
+          'APPROVAL_REJECTED',
+          403,
+        )
+      }
     }
 
     /* ── 6. Gerar token ──────────────────────────────────────────────────── */

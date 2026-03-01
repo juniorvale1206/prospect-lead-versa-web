@@ -28,6 +28,7 @@ export interface MobileJWTPayload {
   tenantNome: string | null
   tokenId:    string   // ID do registro em MobileToken
   type:       'mobile'
+  [key: string]: unknown  // index signature for jose compatibility
 }
 
 // ─── Criar token mobile (30 dias) ────────────────────────────────────────────

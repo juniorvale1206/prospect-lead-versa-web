@@ -545,7 +545,7 @@ export default function ProdutosClient() {
       for (const p of (data.products ?? []) as Product[]) {
         if (p.tenant) map.set(p.tenant.id, p.tenant)
       }
-      setTenants([...map.values()])
+      setTenants(Array.from(map.values()))
     } catch {
       setToast({ msg: 'Erro ao carregar produtos', tipo: 'error' })
     } finally {

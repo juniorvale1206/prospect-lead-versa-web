@@ -6,7 +6,9 @@ import Header from '@/components/sidebar/Header'
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession()
   if (!session) redirect('/login')
-  if (session.role !== 'ADMIN_MASTER') redirect('/acesso-negado')
+  // ADMIN_MASTER tem acesso total; MANAGER acessa apenas promotores
+  const allowedRoles = ['ADMIN_MASTER', 'MANAGER']
+  if (!allowedRoles.includes(session.role)) redirect('/acesso-negado')
   return (
     <div className="flex min-h-screen bg-slate-50">
       <Sidebar user={{ email: session.email, nome: session.nome, role: session.role, tenantNome: session.tenantNome }} />
