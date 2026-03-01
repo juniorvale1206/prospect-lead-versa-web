@@ -332,7 +332,7 @@ function ModalExport({
       const blob = await res.blob()
       const a    = document.createElement('a')
       a.href     = URL.createObjectURL(blob)
-      a.download = `prospeclead_leads_${new Date().toISOString().slice(0, 10)}.csv`
+      a.download = `ProspecLead_Leads_${new Date().toISOString().slice(0, 10)}.xlsx`
       a.click()
       URL.revokeObjectURL(a.href)
       onClose()
@@ -355,12 +355,13 @@ function ModalExport({
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
               <svg className="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
               </svg>
             </div>
             <div>
-              <h2 className="font-bold text-slate-800">Exportar Dados (CSV)</h2>
-              <p className="text-slate-400 text-xs mt-0.5">Configurar filtros da extração</p>
+              <h2 className="font-bold text-slate-800">Exportar para Excel (.xlsx)</h2>
+              <p className="text-slate-400 text-xs mt-0.5">Planilha organizada com 3 abas e estilos</p>
             </div>
           </div>
           <button onClick={onClose} className="w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100">
@@ -441,11 +442,29 @@ function ModalExport({
 
           {/* Colunas exportadas */}
           <div className="bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3">
-            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-2">📋 Colunas exportadas</p>
-            <div className="flex flex-wrap gap-1.5">
-              {['ID', 'Tipo', 'Estágio', 'Cliente', 'WhatsApp', 'Placa', 'CNPJ', 'Empresa', 'Frota', 'Dores', 'Praça', 'Status', 'Comissão', 'Promotor', 'Franquia', 'Data'].map(c => (
-                <span key={c} className="text-[11px] bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-lg font-medium">{c}</span>
-              ))}
+            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-2">📊 Estrutura do arquivo Excel</p>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">📋</span>
+                <div>
+                  <p className="text-xs font-bold text-slate-700">Aba 1 — Leads</p>
+                  <p className="text-[11px] text-slate-500">26 colunas · cabeçalhos coloridos por grupo · zebra · total</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-lg">📊</span>
+                <div>
+                  <p className="text-xs font-bold text-slate-700">Aba 2 — Sumário Executivo</p>
+                  <p className="text-[11px] text-slate-500">Totais, funil, auditoria e comissões consolidadas</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-lg">💰</span>
+                <div>
+                  <p className="text-xs font-bold text-slate-700">Aba 3 — Comissões por Promotor</p>
+                  <p className="text-[11px] text-slate-500">Ranking de promotores com total de comissão</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -474,7 +493,7 @@ function ModalExport({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
               </svg>
             )}
-            {loading ? 'Gerando CSV…' : 'Baixar CSV'}
+            {loading ? 'Gerando Excel…' : '⬇ Baixar Excel (.xlsx)'}
           </button>
         </div>
       </div>
@@ -811,7 +830,7 @@ export default function KanbanClient({ userRole, userTenantId, userName }: Kanba
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
             </svg>
-            Exportar Dados (CSV)
+            Exportar Excel (.xlsx)
           </button>
         </div>
 
