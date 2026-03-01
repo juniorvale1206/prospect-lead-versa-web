@@ -9,7 +9,7 @@ export interface JWTPayload {
   userId: string
   email: string
   nome: string
-  role: 'ADMIN_MASTER' | 'FINANCIAL' | 'MANAGER'
+  role: 'ADMIN_MASTER' | 'FINANCIAL' | 'MANAGER' | 'PROMOTER' | 'PARTNER_EMPLOYEE'
   tenantId: string | null
   tenantNome: string | null
 }
@@ -43,6 +43,8 @@ export function getRoleLabel(role: string): string {
     ADMIN_MASTER: 'Admin Master',
     FINANCIAL: 'Financeiro',
     MANAGER: 'Gestor',
+    PROMOTER: 'Promotor',
+    PARTNER_EMPLOYEE: 'Parceiro',
   }
   return labels[role] || role
 }

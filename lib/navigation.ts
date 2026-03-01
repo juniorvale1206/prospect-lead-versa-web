@@ -1,4 +1,4 @@
-export type Role = 'ADMIN_MASTER' | 'FINANCIAL' | 'MANAGER'
+export type Role = 'ADMIN_MASTER' | 'FINANCIAL' | 'MANAGER' | 'PROMOTER' | 'PARTNER_EMPLOYEE'
 
 export interface NavItem {
   label:   string
@@ -35,10 +35,15 @@ export function getNavItems(role: Role): NavItem[] {
     ]
   }
 
-  // MANAGER
-  return [
-    { label: 'Kanban — Funil',         href: '/operacao',         icon: 'kanban', section: 'Operação'    },
-    { label: 'Equipe (Promotores)',    href: '/operacao/equipe',  icon: 'team',   section: 'Operação'    },
-    { label: 'Mapa de Calor',          href: '/operacao/mapa',    icon: 'map',    section: 'Operação'    },
-  ]
+  if (role === 'MANAGER') {
+    return [
+      { label: 'Kanban — Funil',         href: '/operacao',         icon: 'kanban', section: 'Operação'    },
+      { label: 'Equipe (Promotores)',    href: '/operacao/equipe',  icon: 'team',   section: 'Operação'    },
+      { label: 'Mapa de Calor',          href: '/operacao/mapa',    icon: 'map',    section: 'Operação'    },
+    ]
+  }
+
+  // PROMOTER / PARTNER_EMPLOYEE — acesso somente via app mobile (Flutter)
+  // Essas roles não usam o painel web — são redirecionadas ao login
+  return []
 }
