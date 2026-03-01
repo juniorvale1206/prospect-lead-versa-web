@@ -27,9 +27,11 @@ model User {
   email     String   @unique
   password  String
   nome      String
-  /// ADMIN_MASTER | FINANCIAL | MANAGER
+  /// ADMIN_MASTER | FINANCIAL | MANAGER | PROMOTER | PARTNER_EMPLOYEE
   role      String   @default("MANAGER")
   ativo     Boolean  @default(true)
+  telefone  String?
+  avatarUrl String?
   tenantId  String?
   tenant    Tenant?  @relation(fields: [tenantId], references: [id])
   createdAt DateTime @default(now())
@@ -37,6 +39,20 @@ model User {
 
   leadsAuditados  Lead[]  @relation("AuditadoPor")
   leadsCapturados Lead[]  @relation("CapturadoPor")
+}
+
+// ─────────────────────────────────────────────
+// TOKEN MOBILE — para invalidação futura
+// ─────────────────────────────────────────────
+model MobileToken {
+  id          String   @id @default(cuid())
+  userId      String
+  token       String   @unique
+  deviceInfo  String?
+  lastUsedAt  DateTime @default(now())
+  expiresAt   DateTime
+  revoked     Boolean  @default(false)
+  createdAt   DateTime @default(now())
 }
 
 // ─────────────────────────────────────────────

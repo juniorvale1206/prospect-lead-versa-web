@@ -45,7 +45,7 @@ async function main() {
     create: { email: 'gestor@prospeclead.com', password: senha, nome: 'Gestor Rastremix', role: 'MANAGER', tenantId: tenant1.id, ativo: true },
   })
 
-  // Promotores da equipe
+  // Promotores da equipe (MANAGER — acesso ao painel web + app mobile)
   const promotor1 = await prisma.user.upsert({
     where: { email: 'ana.silva@prospeclead.com' }, update: {},
     create: { email: 'ana.silva@prospeclead.com', password: senha, nome: 'Ana Silva', role: 'MANAGER', tenantId: tenant1.id, ativo: true },
@@ -63,7 +63,50 @@ async function main() {
     create: { email: 'lucas.ferreira@prospeclead.com', password: senha, nome: 'Lucas Ferreira', role: 'MANAGER', tenantId: tenant2.id, ativo: true },
   })
 
+  // ── Promotores mobile exclusivos (role PROMOTER — apenas app Flutter) ────
+  const mobilePromotor1 = await prisma.user.upsert({
+    where: { email: 'promotor.rastremix@prospeclead.com' }, update: {},
+    create: {
+      email: 'promotor.rastremix@prospeclead.com',
+      password: senha,
+      nome: 'Carlos Promotor',
+      role: 'PROMOTER',
+      tenantId: tenant1.id,
+      ativo: true,
+      telefone: '(31) 98800-1234',
+    },
+  })
+  const mobilePromotor2 = await prisma.user.upsert({
+    where: { email: 'promotor.valeteck@prospeclead.com' }, update: {},
+    create: {
+      email: 'promotor.valeteck@prospeclead.com',
+      password: senha,
+      nome: 'Beatriz Promotora',
+      role: 'PROMOTER',
+      tenantId: tenant2.id,
+      ativo: true,
+      telefone: '(11) 97700-5678',
+    },
+  })
+
+  // ── Funcionário parceiro (role PARTNER_EMPLOYEE — pdv/revendedor) ─────────
+  const partnerEmployee = await prisma.user.upsert({
+    where: { email: 'parceiro.gpslove@prospeclead.com' }, update: {},
+    create: {
+      email: 'parceiro.gpslove@prospeclead.com',
+      password: senha,
+      nome: 'Diego Parceiro',
+      role: 'PARTNER_EMPLOYEE',
+      tenantId: tenant3.id,
+      ativo: true,
+      telefone: '(47) 96600-9999',
+    },
+  })
+
   console.log('✅ Usuários + Promotores criados (senha: 123456)')
+  console.log('   promotor.rastremix@prospeclead.com → PROMOTER (Rastremix)')
+  console.log('   promotor.valeteck@prospeclead.com  → PROMOTER (Valeteck)')
+  console.log('   parceiro.gpslove@prospeclead.com   → PARTNER_EMPLOYEE (Gps Love)')
 
   /* ── Produtos ────────────────────────────── */
   await prisma.product.deleteMany({})
@@ -215,12 +258,77 @@ async function main() {
     },
   ]
 
-  for (const lead of [...b2cAuditoria, ...b2bLeads]) {
+  // ── Leads gerados pelo promotor mobile (para teste do dashboard) ─────────
+  const leadsMobilePromotor = [
+    // Leads de hoje (para bônus do dia)
+    {
+      leadType: 'B2C', nomeCliente: 'Wagner Alves Neto',
+      telefone: '(31) 99900-1111', email: 'wagner.neto@gmail.com',
+      veiculo: 'Fiat Toro Ranch 2023', placa: 'MGA3H11', praca: 'Contagem - MG',
+      platePhotoUrl: PLATE_PHOTOS[0],
+      status: 'PENDENTE_AUDITORIA', commissionValue: 1.00, funnelStage: 'LEAD_COLETADO',
+      tenantId: tenant1.id, promotorId: mobilePromotor1.id,
+      createdAt: new Date(Date.now() - 1000 * 60 * 30), // 30 min atrás
+    },
+    {
+      leadType: 'B2C', nomeCliente: 'Sônia Pereira de Souza',
+      telefone: '(31) 98811-2222', email: 'sonia.souza@outlook.com',
+      veiculo: 'Jeep Compass Limited 2022', placa: 'BHZ7K22', praca: 'Belo Horizonte - MG',
+      platePhotoUrl: PLATE_PHOTOS[1],
+      status: 'AUDITADO_APROVADO', commissionValue: 2.00, funnelStage: 'IA_EM_ATENDIMENTO',
+      auditadoPorId: financeiro.id, auditadoEm: new Date(Date.now() - 1000 * 60 * 15),
+      tenantId: tenant1.id, promotorId: mobilePromotor1.id,
+      createdAt: new Date(Date.now() - 1000 * 60 * 60), // 1h atrás
+    },
+    {
+      leadType: 'B2C', nomeCliente: 'Renato Lima dos Santos',
+      telefone: '(31) 97722-3333', email: 'renato.santos@empresa.com',
+      veiculo: 'Volkswagen Nivus Highline 2023', placa: 'MGL5J33', praca: 'Betim - MG',
+      platePhotoUrl: PLATE_PHOTOS[2],
+      status: 'PENDENTE_AUDITORIA', commissionValue: 1.00, funnelStage: 'LEAD_COLETADO',
+      tenantId: tenant1.id, promotorId: mobilePromotor1.id,
+      createdAt: new Date(Date.now() - 1000 * 60 * 90), // 1,5h atrás
+    },
+    // Lead histórico (ontem) — não conta no "hoje"
+    {
+      leadType: 'B2C', nomeCliente: 'Cláudia Martins Barbosa',
+      telefone: '(31) 96633-4444', email: 'claudia.barbosa@email.com',
+      veiculo: 'Honda HR-V EXL 2022', placa: 'MGB2F44', praca: 'Nova Lima - MG',
+      platePhotoUrl: PLATE_PHOTOS[3],
+      status: 'AUDITADO_APROVADO', commissionValue: 2.00, funnelStage: 'CONVERTIDO',
+      auditadoPorId: financeiro.id, auditadoEm: new Date(Date.now() - 1000 * 60 * 60 * 26),
+      tenantId: tenant1.id, promotorId: mobilePromotor1.id,
+      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 26), // ontem
+    },
+    {
+      leadType: 'B2C', nomeCliente: 'Eduardo Pinto Carvalho',
+      telefone: '(31) 95544-5555', email: 'eduardo.carvalho@gmail.com',
+      veiculo: 'Chevrolet Tracker Premier 2023', placa: 'MGC9G55', praca: 'Uberlândia - MG',
+      platePhotoUrl: PLATE_PHOTOS[4],
+      status: 'AUDITADO_REJEITADO', commissionValue: 1.00, funnelStage: 'LEAD_COLETADO',
+      motivoRejeicao: 'Foto com reflexo — placa parcialmente ilegível',
+      auditadoPorId: adminMaster.id, auditadoEm: new Date(Date.now() - 1000 * 60 * 60 * 48),
+      tenantId: tenant1.id, promotorId: mobilePromotor1.id,
+      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 48), // anteontem
+    },
+    // Lead do parceiro Gps Love
+    {
+      leadType: 'B2C', nomeCliente: 'Alexandre Rocha Mendes',
+      telefone: '(47) 99955-6666', email: 'alex.rocha@email.com',
+      veiculo: 'Renault Kwid Intense 2023', placa: 'JVA4L66', praca: 'Joinville - SC',
+      platePhotoUrl: PLATE_PHOTOS[0],
+      status: 'PENDENTE_AUDITORIA', commissionValue: 1.00, funnelStage: 'LEAD_COLETADO',
+      tenantId: tenant3.id, promotorId: partnerEmployee.id,
+      createdAt: new Date(Date.now() - 1000 * 60 * 45), // 45 min atrás
+    },
+  ]
+
+  for (const lead of [...b2cAuditoria, ...b2bLeads, ...leadsMobilePromotor]) {
     await prisma.lead.create({ data: lead as any })
   }
 
-  const total   = b2cAuditoria.length + b2bLeads.length
-  console.log(`✅ ${total} leads criados (${b2cAuditoria.length} B2C + ${b2bLeads.length} B2B)`)
+  const total = b2cAuditoria.length + b2bLeads.length + leadsMobilePromotor.length
+  console.log(`✅ ${total} leads criados (${b2cAuditoria.length} B2C existentes + ${b2bLeads.length} B2B + ${leadsMobilePromotor.length} mobile)`)
 
   console.log('')
   console.log('═══════════════════════════════════════════════')
@@ -228,13 +336,18 @@ async function main() {
   console.log('═══════════════════════════════════════════════')
   console.log('')
   console.log('👤 Usuários (senha: 123456):')
-  console.log('   admin@prospeclead.com           → ADMIN_MASTER')
-  console.log('   financeiro@prospeclead.com       → FINANCIAL')
-  console.log('   gestor@prospeclead.com           → MANAGER (Rastremix)')
-  console.log('   ana.silva@prospeclead.com        → Promotora (Rastremix)')
-  console.log('   joao.costa@prospeclead.com       → Promotor (Rastremix)')
-  console.log('   mariana.ramos@prospeclead.com    → Promotora (Valeteck)')
-  console.log('   lucas.ferreira@prospeclead.com   → Promotor (Valeteck)')
+  console.log('   admin@prospeclead.com                   → ADMIN_MASTER')
+  console.log('   financeiro@prospeclead.com               → FINANCIAL')
+  console.log('   gestor@prospeclead.com                   → MANAGER (Rastremix)')
+  console.log('   ana.silva@prospeclead.com                → Promotora MANAGER (Rastremix)')
+  console.log('   joao.costa@prospeclead.com               → Promotor MANAGER (Rastremix)')
+  console.log('   mariana.ramos@prospeclead.com            → Promotora MANAGER (Valeteck)')
+  console.log('   lucas.ferreira@prospeclead.com           → Promotor MANAGER (Valeteck)')
+  console.log('')
+  console.log('📱 Mobile App (Flutter) — roles exclusivos:')
+  console.log('   promotor.rastremix@prospeclead.com  → PROMOTER (Rastremix)')
+  console.log('   promotor.valeteck@prospeclead.com   → PROMOTER (Valeteck)')
+  console.log('   parceiro.gpslove@prospeclead.com    → PARTNER_EMPLOYEE (Gps Love)')
   console.log('')
   console.log('📊 Kanban B2C:')
   console.log('   LEAD_COLETADO: 3 | IA_ATENDIMENTO: 1 | REUNIAO: 1 | CONVERTIDO: 2')

@@ -26,6 +26,12 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   const token = request.cookies.get('prospeclead-token')?.value
 
+  // ── Rotas mobile (Bearer token, sem cookie) ──────────────────────────────
+  // Autenticação feita internamente por verifyMobileToken() em cada handler
+  if (pathname.startsWith('/api/mobile/')) {
+    return NextResponse.next()
+  }
+
   // Rotas públicas - não precisa de autenticação
   const publicRoutes = ['/login', '/api/auth/login']
   if (publicRoutes.some((route) => pathname.startsWith(route))) {
@@ -94,6 +100,7 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|api/auth/login|api/auth/logout).*)',
+    // Exclui assets estáticos, rotas de auth e rotas mobile (têm seu próprio auth via Bearer)
+    '/((?!_next/static|_next/image|favicon.ico|uploads|api/auth/login|api/auth/logout|api/mobile).*)',
   ],
 }
