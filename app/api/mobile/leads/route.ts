@@ -34,6 +34,7 @@
  *
  * Erros:
  *   400  MISSING_FIELDS   — telefone ou nomeCliente ausentes
+ *   400  MISSING_PROMOTER — promoterId ausente no body E no token
  *   400  FILE_TOO_LARGE   — platePhoto > 5 MB
  *   400  INVALID_TYPE     — leadType inválido
  *   401  UNAUTHORIZED     — token ausente ou inválido
@@ -89,8 +90,22 @@ export async function POST(req: NextRequest) {
     const frota              = formData.get('frota')?.toString().trim()             || null
     const segmento           = formData.get('segmento')?.toString().trim()         || null
     const doresIdentificadas = formData.get('doresIdentificadas')?.toString().trim() || null
+    // promoterId pode vir do form OU cair para o sub do token (retrocompatível)
+    const promoterIdFromForm  = formData.get('promoterId')?.toString().trim() || null
 
     /* ── 4. Validações obrigatórias ──────────────────────────────────────── */
+
+    // ── BLINDAGEM: promoterId obrigatório — nenhum lead sem dono no banco ──
+    const resolvedPromotorId = promoterIdFromForm ?? payload.sub ?? null
+    if (!resolvedPromotorId) {
+      return mobileError(
+        'O campo promoterId é obrigatório. Nenhum lead pode ser criado sem um promotor responsável.',
+        'MISSING_PROMOTER',
+        400,
+        { field: 'promoterId' },
+      )
+    }
+
     if (!nomeCliente) {
       return mobileError(
         'O nome do cliente é obrigatório.',
@@ -202,8 +217,8 @@ export async function POST(req: NextRequest) {
         status,
         commissionValue: 1.00,
 
-        // Promotor (usuário logado no app)
-        promotorId: payload.sub,
+        // Promotor responsável pelo lead (validado acima — nunca nulo)
+        promotorId: resolvedPromotorId,
 
         // Multi-tenant (herdado do promotor)
         tenantId: payload.tenantId ?? null,
