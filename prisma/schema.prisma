@@ -94,6 +94,19 @@ model Product {
   price                Float
   commissionPercentage Float    @default(30)
   isActive             Boolean  @default(true)
+
+  // ── Adesão e Parcelamento (mobile sales flow) ──────────────────────────────
+  /// Taxa de adesão (setup fee) cobrada na 1ª parcela. Default: 0
+  setupFee             Float    @default(0)
+  /// Permite parcelar no cartão de crédito?
+  allowCreditCardInstallments Boolean @default(false)
+  /// Número máximo de parcelas (1 = à vista)
+  maxInstallments      Int      @default(1)
+  /// Ciclos de cobrança suportados como JSON array.
+  /// Ex: '["MONTHLY","ANNUALLY"]'
+  /// Valores: MONTHLY | QUARTERLY | SEMI_ANNUALLY | ANNUALLY | ONE_TIME
+  billingCycles        String   @default("[\"MONTHLY\"]")
+
   tenantId             String?
   tenant               Tenant?  @relation(fields: [tenantId], references: [id])
   createdAt            DateTime @default(now())
@@ -134,6 +147,14 @@ model Lead {
   /// LEAD_COLETADO | IA_EM_ATENDIMENTO | REUNIAO_AGENDADA | CONVERTIDO
   funnelStage     String    @default("LEAD_COLETADO")
 
+  // ── Interação com IA (SDR / PayMeZap) ────────────────────────────────────
+  /// CONTATADO | RESPONDIDO  (atualizado pelo webhook da IA)
+  iaStatus        String?
+  /// Timestamp em que o cliente respondeu à IA pela 1ª vez
+  iaRespondidoEm  DateTime?
+  /// Telefone somente dígitos sem +55 (índice para busca rápida do webhook)
+  telefoneNorm    String?
+
   // ── Auditoria de placa ────────────────────
   /// PENDENTE_AUDITORIA | AUDITADO_APROVADO | AUDITADO_REJEITADO
   status          String    @default("PENDENTE_AUDITORIA")
@@ -153,6 +174,29 @@ model Lead {
 
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+}
+
+// ─────────────────────────────────────────────
+// EXTRATO ATÔMICO DE COMISSÃO (Ledger por Evento)
+// ─────────────────────────────────────────────
+// Cada linha = 1 crédito gerado por evento.
+// Criado automaticamente pelo webhook IA ao confirmar resposta do lead.
+model CommissionLedger {
+  id          String   @id @default(cuid())
+  /// Promotor que recebe o crédito
+  promotorId  String
+  /// Lead que gerou a comissão
+  leadId      String
+  /// IA_RESPONSE_WITH_PHOTO | IA_RESPONSE_NO_PHOTO | MANUAL_ADJUSTMENT | SALE_CONVERTED
+  eventType   String
+  /// Valor em R$ (positivo = crédito, negativo = estorno)
+  amount      Float
+  /// Texto legível no extrato do promotor
+  description String
+  /// PENDING (aguarda liquidação) | PAID (liquidado no fechamento mensal)
+  status      String   @default("PENDING")
+  tenantId    String?
+  createdAt   DateTime @default(now())
 }
 
 // ─────────────────────────────────────────────

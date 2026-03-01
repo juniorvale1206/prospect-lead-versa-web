@@ -32,6 +32,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // ── Webhooks externos (autenticação via X-Webhook-Secret) ────────────────
+  // O webhook da IA não usa cookie de sessão — autenticação feita no handler
+  if (pathname.startsWith('/api/webhooks/')) {
+    return NextResponse.next()
+  }
+
   // Rotas públicas - não precisa de autenticação
   const publicRoutes = ['/login', '/api/auth/login']
   if (publicRoutes.some((route) => pathname.startsWith(route))) {
@@ -101,6 +107,6 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     // Exclui assets estáticos, rotas de auth e rotas mobile (têm seu próprio auth via Bearer)
-    '/((?!_next/static|_next/image|favicon.ico|uploads|api/auth/login|api/auth/logout|api/mobile).*)',
+    '/((?!_next/static|_next/image|favicon.ico|uploads|api/auth/login|api/auth/logout|api/mobile|api/webhooks).*)',
   ],
 }
