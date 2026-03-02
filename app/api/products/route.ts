@@ -4,12 +4,12 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Guard de roles: ADMIN_MASTER | FINANCIAL | MANAGER | TEAM_LEADER
  *
- * Novos campos suportados (Adesão + Parcelamento):
+ * Campos suportados (Adesão + Parcelamento + Assinatura):
  *   setupFee                     Float   — taxa de adesão (default 0)
  *   allowCreditCardInstallments  Boolean — permite parcelamento no cartão
  *   maxInstallments              Int     — máximo de parcelas (1 = à vista)
- *   billingCycles                string[]— ciclos permitidos
- *                                          ['MONTHLY','QUARTERLY','SEMI_ANNUALLY','ANNUALLY','ONE_TIME']
+ *   billingCycles                string[]— ciclos: MONTHLY|QUARTERLY|SEMI_ANNUALLY|ANNUALLY|ONE_TIME
+ *   monthlySubscriptionPrice     Float   — valor base mensal da assinatura (só HARDWARE, default 0)
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -157,11 +157,12 @@ export async function POST(req: NextRequest) {
     commissionPercentage,
     tenantId,
     isActive,
-    // Novos campos: Adesão + Parcelamento
+    // Novos campos: Adesão + Parcelamento + Assinatura mensal
     setupFee,
     allowCreditCardInstallments,
     maxInstallments,
     billingCycles: rawCycles,
+    monthlySubscriptionPrice,
   } = body
 
   /* ── Validações ──────────────────────────────────────────────────────────── */
@@ -189,6 +190,12 @@ export async function POST(req: NextRequest) {
   const setup = (setupFee as number) ?? 0
   if (typeof setup !== 'number' || setup < 0) {
     return err('setupFee deve ser um número >= 0.', 400, 'VALIDATION_ERROR')
+  }
+
+  // ── Validação: monthlySubscriptionPrice ───────────────────────────────────
+  const monthlySub = (monthlySubscriptionPrice as number) ?? 0
+  if (typeof monthlySub !== 'number' || monthlySub < 0) {
+    return err('monthlySubscriptionPrice deve ser um número >= 0.', 400, 'VALIDATION_ERROR')
   }
 
   // ── Validação: maxInstallments ────────────────────────────────────────────
@@ -261,6 +268,8 @@ export async function POST(req: NextRequest) {
       allowCreditCardInstallments: Boolean(allowCreditCardInstallments),
       maxInstallments:             maxInst,
       billingCycles:               serializeCycles(cycles),
+      // Assinatura mensal vinculada ao hardware
+      monthlySubscriptionPrice:    monthlySub,
       tenantId:                    effectiveTenantId,
     },
     include: { tenant: { select: { id: true, nome: true, slug: true } } },

@@ -110,6 +110,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     tenantId, isActive,
     // Novos campos
     setupFee, allowCreditCardInstallments, maxInstallments, billingCycles: rawCycles,
+    monthlySubscriptionPrice,
   } = body
 
   const data: Record<string, unknown> = {}
@@ -146,7 +147,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   if (isActive !== undefined) data.isActive = Boolean(isActive)
 
-  /* ── Novos campos: Adesão + Parcelamento ─────────────────────────────────── */
+  /* ── Novos campos: Adesão + Parcelamento + Assinatura mensal ─────────────── */
   if (setupFee !== undefined) {
     const sf = setupFee as number
     if (typeof sf !== 'number' || sf < 0) return err('setupFee deve ser >= 0.', 400)
@@ -163,6 +164,15 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       return err('maxInstallments deve ser um inteiro entre 1 e 72.', 400)
     }
     data.maxInstallments = mi
+  }
+
+  // monthlySubscriptionPrice: valor base mensal da assinatura vinculada ao hardware
+  if (monthlySubscriptionPrice !== undefined) {
+    const msp = monthlySubscriptionPrice as number
+    if (typeof msp !== 'number' || msp < 0) {
+      return err('monthlySubscriptionPrice deve ser um número >= 0.', 400)
+    }
+    data.monthlySubscriptionPrice = msp
   }
 
   if (rawCycles !== undefined) {

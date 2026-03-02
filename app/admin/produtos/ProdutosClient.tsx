@@ -11,11 +11,11 @@ interface Tenant {
   slug: string
 }
 
-// Ciclos de cobrança disponíveis
+// Ciclos de cobrança disponíveis (com multiplicador para cálculo automático)
 const CYCLE_OPTIONS = [
-  { value: 'QUARTERLY',      label: 'Trimestral',  icon: '🗓️',  desc: 'A cada 3 meses'  },
-  { value: 'SEMI_ANNUALLY',  label: 'Semestral',   icon: '📅',  desc: 'A cada 6 meses'  },
-  { value: 'ANNUALLY',       label: 'Anual',       icon: '📆',  desc: 'A cada 12 meses' },
+  { value: 'QUARTERLY',     label: 'Trimestral', icon: '🗓️', desc: 'A cada 3 meses',  months: 3  },
+  { value: 'SEMI_ANNUALLY', label: 'Semestral',  icon: '📅', desc: 'A cada 6 meses',  months: 6  },
+  { value: 'ANNUALLY',      label: 'Anual',      icon: '📆', desc: 'A cada 12 meses', months: 12 },
 ] as const
 type BillingCycle = typeof CYCLE_OPTIONS[number]['value']
 
@@ -30,6 +30,8 @@ interface Product {
   billingCycles: string[]
   allowCreditCardInstallments: boolean
   maxInstallments: number
+  /** Valor base mensal da assinatura de plataforma (só HARDWARE). Default: 0 */
+  monthlySubscriptionPrice: number
   isActive: boolean
   tenantId: string | null
   tenant: Tenant | null
@@ -129,6 +131,8 @@ function ModalProduto({ product, tenants, onClose, onSaved }: ModalProdutoProps)
                                     : ['QUARTERLY']) as BillingCycle[],
     allowCreditCardInstallments: product?.allowCreditCardInstallments ?? false,
     maxInstallments:             product?.maxInstallments             ?? 1,
+    // Assinatura mensal vinculada ao hardware
+    monthlySubscriptionPrice:    product?.monthlySubscriptionPrice    ?? 0,
   })
   const [errors, setErrors]   = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
@@ -167,7 +171,8 @@ function ModalProduto({ product, tenants, onClose, onSaved }: ModalProdutoProps)
       ...f,
       type: t,
       // Reset condicionais — cast explícito para BillingCycle[] para satisfazer o TypeScript
-      setupFee:      t === 'SUBSCRIPTION_PLAN' ? f.setupFee : 0,
+      setupFee:                 t === 'SUBSCRIPTION_PLAN' ? f.setupFee : 0,
+      monthlySubscriptionPrice: t === 'HARDWARE' ? f.monthlySubscriptionPrice : 0,
       billingCycles: (t === 'HARDWARE'
         ? (f.billingCycles.length ? f.billingCycles : ['QUARTERLY' as BillingCycle])
         : [] as BillingCycle[]),
@@ -189,6 +194,9 @@ function ModalProduto({ product, tenants, onClose, onSaved }: ModalProdutoProps)
     // HARDWARE: ao menos 1 ciclo selecionado
     if (isHardware && form.billingCycles.length === 0)
       errs.billingCycles = 'Selecione ao menos um ciclo de assinatura obrigatória'
+    // HARDWARE: valor mensal obrigatório quando algum ciclo está selecionado
+    if (isHardware && form.billingCycles.length > 0 && (form.monthlySubscriptionPrice === 0 || isNaN(form.monthlySubscriptionPrice)))
+      errs.monthlySubscriptionPrice = 'Informe o valor base mensal da assinatura de plataforma'
     return errs
   }
 
@@ -212,11 +220,11 @@ function ModalProduto({ product, tenants, onClose, onSaved }: ModalProdutoProps)
         isActive:                    form.isActive,
         // Campos condicionais
         setupFee:                    isSubscription ? Number(form.setupFee) : 0,
-        billingCycles:               isHardware
-                                       ? form.billingCycles
-                                       : ['MONTHLY'],
+        billingCycles:               isHardware ? form.billingCycles : ['MONTHLY'],
         allowCreditCardInstallments: form.allowCreditCardInstallments,
         maxInstallments:             Number(form.maxInstallments),
+        // Assinatura mensal — só para HARDWARE, zerado para planos
+        monthlySubscriptionPrice:    isHardware ? Number(form.monthlySubscriptionPrice) : 0,
       }
 
       const res  = await fetch(url, {
@@ -488,6 +496,35 @@ function ModalProduto({ product, tenants, onClose, onSaved }: ModalProdutoProps)
                 {errors.price && <p className="text-red-500 text-xs mt-1">{errors.price}</p>}
               </div>
 
+              {/* ── Valor Base Mensal da Assinatura ───────────────────── */}
+              <div>
+                <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
+                  Valor Base Mensal da Assinatura (R$) <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">R$</span>
+                  <input
+                    type="number" min={0} step={0.01}
+                    value={form.monthlySubscriptionPrice}
+                    onChange={e => {
+                      setField('monthlySubscriptionPrice', parseFloat(e.target.value) || 0)
+                    }}
+                    placeholder="Ex: 89.90"
+                    className={`w-full pl-9 pr-4 py-3 bg-slate-50 border rounded-xl text-slate-800
+                      focus:outline-none focus:ring-2 focus:bg-white transition-all text-sm
+                      ${errors.monthlySubscriptionPrice
+                        ? 'border-red-300 focus:ring-red-200'
+                        : 'border-slate-200 focus:ring-blue-200 focus:border-blue-300'}`}
+                  />
+                </div>
+                {errors.monthlySubscriptionPrice && (
+                  <p className="text-red-500 text-xs mt-1 font-medium">{errors.monthlySubscriptionPrice}</p>
+                )}
+                <p className="text-slate-400 text-[11px] mt-1">
+                  Base para cálculo automático dos totais de cada ciclo abaixo.
+                </p>
+              </div>
+
               {/* Ciclos de Assinatura Obrigatória */}
               <div>
                 <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
@@ -499,7 +536,11 @@ function ModalProduto({ product, tenants, onClose, onSaved }: ModalProdutoProps)
 
                 <div className="space-y-2">
                   {CYCLE_OPTIONS.map(opt => {
-                    const checked = form.billingCycles.includes(opt.value)
+                    const checked   = form.billingCycles.includes(opt.value)
+                    const baseVal   = Number(form.monthlySubscriptionPrice) || 0
+                    const totalCiclo = baseVal * opt.months
+                    const hasBase   = baseVal > 0
+
                     return (
                       <button
                         key={opt.value}
@@ -532,10 +573,29 @@ function ModalProduto({ product, tenants, onClose, onSaved }: ModalProdutoProps)
                             {opt.desc}
                           </p>
                         </div>
+                        {/* ── Valor calculado em tempo real ── */}
+                        <div className="text-right flex-shrink-0">
+                          {hasBase ? (
+                            <div className={`flex flex-col items-end gap-0.5`}>
+                              <span className={`text-xs font-black ${
+                                checked ? 'text-blue-700' : 'text-slate-500'
+                              }`}>
+                                {fmtBRL(totalCiclo)}
+                              </span>
+                              <span className={`text-[10px] ${
+                                checked ? 'text-blue-400' : 'text-slate-400'
+                              }`}>
+                                {opt.months}× {fmtBRL(baseVal)}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-slate-300 italic">informe valor</span>
+                          )}
+                        </div>
                         {checked && (
                           <span className="text-xs font-bold text-blue-600 bg-blue-100
-                            px-2 py-0.5 rounded-full border border-blue-200">
-                            Habilitado
+                            px-2 py-0.5 rounded-full border border-blue-200 ml-1">
+                            ✓
                           </span>
                         )}
                       </button>

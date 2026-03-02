@@ -106,6 +106,10 @@ model Product {
   /// Ex: '["MONTHLY","ANNUALLY"]'
   /// Valores: MONTHLY | QUARTERLY | SEMI_ANNUALLY | ANNUALLY | ONE_TIME
   billingCycles        String   @default("[\"MONTHLY\"]")
+  /// Valor base MENSAL da assinatura de plataforma vinculada ao hardware.
+  /// Usado para calcular os totais trimestrais/semestrais/anuais no PDV.
+  /// Aplica-se apenas a produtos do tipo HARDWARE. Default: 0
+  monthlySubscriptionPrice Float @default(0)
 
   tenantId             String?
   tenant               Tenant?  @relation(fields: [tenantId], references: [id])
