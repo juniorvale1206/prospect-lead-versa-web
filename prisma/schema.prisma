@@ -64,6 +64,9 @@ model User {
   leadsAuditados  Lead[]  @relation("AuditadoPor")
   leadsCapturados Lead[]  @relation("CapturadoPor")
 
+  /// Vendas realizadas como promotor
+  vendasRealizadas Sale[]  @relation("VendasPromotor")
+
   /// Comissões liquidadas (pagamentos realizados)
   commissionPayments CommissionPayment[]
 }
@@ -113,6 +116,10 @@ model Product {
 
   tenantId             String?
   tenant               Tenant?  @relation(fields: [tenantId], references: [id])
+
+  /// Vendas deste produto
+  sales                Sale[]
+
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -172,12 +179,58 @@ model Lead {
   promotorId      String?
   promotor        User?     @relation("CapturadoPor", fields: [promotorId], references: [id])
 
+  /// Vendas vinculadas a este lead
+  sales           Sale[]
+
   // ── Multi-tenant ──────────────────────────
   tenantId        String?
   tenant          Tenant?   @relation(fields: [tenantId], references: [id])
 
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+}
+
+// ─────────────────────────────────────────────
+// VENDA — Fechamento de Negócio
+// ─────────────────────────────────────────────
+// Criada via POST /api/mobile/sales pelo app do promotor.
+// A criação é atômica: Sale + Lead.status=VENDIDO + CommissionLedger.
+model Sale {
+  id            String   @id @default(cuid())
+
+  // ── Relações ────────────────────────────────
+  leadId        String
+  lead          Lead     @relation(fields: [leadId], references: [id])
+
+  promoterId    String
+  promoter      User     @relation("VendasPromotor", fields: [promoterId], references: [id])
+
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id])
+
+  // ── Dados da transação ───────────────────────
+  /// PIX | CREDIT_CARD | BOLETO | DINHEIRO
+  paymentMethod String   @default("PIX")
+  /// Número de parcelas (1 = à vista)
+  installments  Int      @default(1)
+  /// Valor total pago no ato (hardware + setup fee, etc.)
+  totalAmount   Float
+
+  // ── Assinatura vinculada ao hardware ────────
+  /// Ciclo contratado: QUARTERLY | SEMI_ANNUALLY | ANNUALLY
+  subscriptionCycle  String?
+  /// Valor da assinatura para o ciclo contratado
+  subscriptionAmount Float   @default(0)
+
+  // ── Comissão gerada ──────────────────────────
+  /// Valor de comissão calculado no ato da venda
+  commissionAmount Float   @default(0)
+
+  // ── Multi-tenant ────────────────────────────
+  tenantId      String?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 // ─────────────────────────────────────────────
