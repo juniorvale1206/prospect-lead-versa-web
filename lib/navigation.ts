@@ -13,6 +13,9 @@ export function getNavItems(role: Role): NavItem[] {
     return [
       // Visão geral
       { label: 'Dashboard Global',       href: '/dashboard',                     icon: 'dashboard',  section: 'Visão Geral'   },
+      // Omnichannel IA
+      { label: 'Caixa de Entrada',       href: '/chat',                          icon: 'chat',       section: 'Omnichannel IA' },
+      { label: 'Agentes de IA',          href: '/agentes',                       icon: 'robot',      section: 'Omnichannel IA' },
       // Operação (acesso total)
       { label: 'Kanban — Funil',         href: '/operacao',                      icon: 'kanban',     section: 'Operação'      },
       // Admin

@@ -20,6 +20,8 @@ model Tenant {
   users     User[]
   leads     Lead[]
   products  Product[]
+  agents    Agent[]
+  channels  Channel[]
 }
 
 model User {
@@ -254,6 +256,115 @@ model CommissionLedger {
   status      String   @default("PENDING")
   tenantId    String?
   createdAt   DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────
+// OMNICHANNEL IA AGENTS
+// ─────────────────────────────────────────────
+
+/// Agente de IA configurado por tenant
+model Agent {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  name         String
+  /// Modelo LLM: gpt-4o-mini | gpt-4o | claude-3-haiku | claude-3-sonnet
+  model        String   @default("gpt-4o-mini")
+  /// FORMAL | NORMAL | DESCONTRAIDA
+  tone         String   @default("NORMAL")
+  /// Prompt de sistema (instruções de comportamento)
+  systemPrompt String   @default("")
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  knowledgeBases KnowledgeBase[]
+  conversations  Conversation[]
+}
+
+/// Base de conhecimento do agente (RAG)
+model KnowledgeBase {
+  id        String   @id @default(cuid())
+  agentId   String
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  /// TEXT | WEBSITE | DOCUMENT
+  type      String   @default("TEXT")
+  /// Conteúdo bruto (texto, URL, ou caminho do arquivo)
+  content   String
+  /// Título/descrição amigável para exibição na UI
+  title     String   @default("")
+  /// TRAINED | PENDING | FAILED
+  status    String   @default("PENDING")
+  /// URL do embedding vetorial (Pinecone/pgvector namespace key)
+  vectorKey String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Canal de comunicação (WhatsApp, Instagram, Webchat)
+model Channel {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  /// WHATSAPP_META | INSTAGRAM | WEBCHAT
+  type        String
+  name        String   @default("")
+  /// JSON serializado com credenciais (phone_number_id, access_token, etc.)
+  credentials String   @default("{}")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  conversations Conversation[]
+}
+
+/// Conversa/ticket entre um contato e um agente num canal
+model Conversation {
+  id         String   @id @default(cuid())
+  /// Identificador externo do contato (número de telefone, user_id Instagram, etc.)
+  contactId  String
+  /// Nome do contato (preenchido via webhook ou pelo operador)
+  contactName String  @default("")
+  /// Foto/avatar do contato (URL)
+  contactAvatar String? 
+
+  agentId    String
+  agent      Agent    @relation(fields: [agentId], references: [id])
+
+  channelId  String
+  channel    Channel  @relation(fields: [channelId], references: [id])
+
+  /// WAITING | BOT_HANDLING | HUMAN_HANDLING | RESOLVED
+  status     String   @default("BOT_HANDLING")
+
+  /// ID do operador humano que assumiu (opcional)
+  assignedToId String?
+
+  tenantId   String?
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  messages   Message[]
+}
+
+/// Mensagem individual de uma conversa
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  /// USER | BOT | HUMAN
+  senderType     String
+  /// Nome do remetente (para exibição na timeline)
+  senderName     String   @default("")
+  content        String
+  /// Tipo da mensagem: text | image | audio | document
+  messageType    String   @default("text")
+  /// URL de mídia (quando messageType != text)
+  mediaUrl       String?
+  /// Lida pelo operador?
+  read           Boolean  @default(false)
+  timestamp      DateTime @default(now())
 }
 
 // ─────────────────────────────────────────────
