@@ -22,6 +22,7 @@ model Tenant {
   products  Product[]
   agents    Agent[]
   channels  Channel[]
+  campaigns Campaign[]
 }
 
 model User {
@@ -397,3 +398,86 @@ model CommissionPayment {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
+
+// ─────────────────────────────────────────────
+// CAMPANHAS DE DISPARO EM MASSA (WhatsApp)
+// ─────────────────────────────────────────────
+
+/// Campanha de mensagens em massa via WhatsApp Cloud API
+model Campaign {
+  id              String   @id @default(cuid())
+
+  /// Nome interno da campanha (ex: "Reativação Junho 2025")
+  name            String
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+
+  /// Nome do template aprovado na Meta (ex: "promocao_rastreador_anual")
+  templateName    String
+  /// Variáveis do template serializadas em JSON (ex: '{"1":"nome","2":"produto"}')
+  templateVars    String   @default("{}")
+  /// Idioma do template (ex: "pt_BR")
+  templateLanguage String  @default("pt_BR")
+
+  /// DRAFT | SCHEDULED | RUNNING | PAUSED | COMPLETED | FAILED
+  status          String   @default("DRAFT")
+
+  /// JSON serializado com os filtros de segmentação usados
+  audienceFilters String   @default("{}")
+  /// Total de leads alvo calculado no momento da criação
+  audienceCount   Int      @default(0)
+
+  /// Quando disparar (null = imediato)
+  scheduledAt     DateTime?
+  /// Quando realmente iniciou
+  startedAt       DateTime?
+  /// Quando finalizou
+  completedAt     DateTime?
+
+  /// Criado por qual usuário
+  createdById     String?
+
+  /// Métricas agregadas (atualizadas pelo webhook de status da Meta)
+  totalSent       Int      @default(0)
+  totalDelivered  Int      @default(0)
+  totalRead       Int      @default(0)
+  totalReplied    Int      @default(0)
+  totalFailed     Int      @default(0)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  messages        CampaignMessage[]
+}
+
+/// Registro individual de cada mensagem enviada numa campanha
+model CampaignMessage {
+  id           String   @id @default(cuid())
+  campaignId   String
+  campaign     Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  /// ID do lead que recebeu a mensagem
+  leadId       String?
+  /// Número de telefone destinatário (E.164 sem +)
+  phoneNumber  String
+  /// Primeiro nome para variáveis do template
+  contactName  String   @default("")
+
+  /// ID da mensagem devolvido pela API da Meta (wamid)
+  waMessageId  String?  @unique
+
+  /// sent | delivered | read | failed | replied
+  deliveryStatus String @default("sent")
+
+  /// Timestamp do último status recebido via webhook
+  statusUpdatedAt DateTime?
+
+  /// Motivo de falha (se deliveryStatus = 'failed')
+  errorMessage String?
+
+  tenantId     String?
+  createdAt    DateTime @default(now())
+}
+
+// Relação inversa no Tenant
+
