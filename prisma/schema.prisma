@@ -11,19 +11,46 @@ datasource db {
 }
 
 model Tenant {
-  id        String    @id @default(cuid())
-  nome      String
-  slug      String    @unique
-  ativo     Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  users     User[]
-  leads     Lead[]
-  products  Product[]
-  agents    Agent[]
-  channels  Channel[]
-  campaigns Campaign[]
-  tasks     Task[]
+  id           String    @id @default(cuid())
+  nome         String
+  slug         String    @unique
+
+  /// CNPJ da franquia (formato: XX.XXX.XXX/XXXX-XX)
+  document     String?
+
+  /// URL da logo para personalização white-label
+  logoUrl      String?
+
+  /// Cor principal em HEX (ex: #10b981)
+  primaryColor String?   @default("#10b981")
+
+  /// STANDARD | PROFESSIONAL | ENTERPRISE
+  plan         String?   @default("STANDARD")
+
+  /// Dados de contato do responsável
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+
+  /// Localização
+  city         String?
+  state        String?
+
+  /// Limites do plano
+  maxUsers     Int       @default(10)
+  maxLeads     Int       @default(1000)
+
+  ativo        Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  users        User[]
+  leads        Lead[]
+  products     Product[]
+  agents       Agent[]
+  channels     Channel[]
+  campaigns    Campaign[]
+  tasks        Task[]
 }
 
 model User {
