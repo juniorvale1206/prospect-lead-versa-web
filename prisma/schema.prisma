@@ -157,6 +157,38 @@ model Lead {
   // ── Qualificação / dores ──────────────────
   doresIdentificadas String?
 
+  // ── Prospecção Ativa B2B (Radar) ──────────
+  /// MANUAL | PROSPECCAO_ATIVA | INDICACAO | CAMPANHA_WPP | API
+  sourceType      String    @default("MANUAL")
+  /// CNAE principal da empresa (ex: "4930-2/02")
+  cnae            String?
+  /// CNAE descrição (ex: "Transporte rodoviário de carga")
+  cnaeDescricao   String?
+  /// Razão social completa (da Receita Federal)
+  razaoSocial     String?
+  /// Número de funcionários (porte da empresa)
+  porte           String?
+  /// Logradouro (rua/av)
+  logradouro      String?
+  /// Número do endereço
+  numero          String?
+  /// Complemento
+  complemento     String?
+  /// Bairro
+  bairro          String?
+  /// Município
+  municipio       String?
+  /// UF
+  uf              String?
+  /// CEP
+  cep             String?
+  /// Sócios / QSA serializado em JSON
+  qsa             String?
+  /// Google Place ID (para enriquecimento via Google Places)
+  googlePlaceId   String?
+  /// Situação cadastral Receita (ATIVA | BAIXADA | SUSPENSA)
+  situacaoCadastral String?
+
   // ── Estágio do Funil (Kanban) ─────────────
   /// LEAD_COLETADO | IA_EM_ATENDIMENTO | REUNIAO_AGENDADA | CONVERTIDO
   funnelStage     String    @default("LEAD_COLETADO")

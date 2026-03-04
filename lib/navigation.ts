@@ -17,6 +17,7 @@ export function getNavItems(role: Role): NavItem[] {
       { label: 'Caixa de Entrada',       href: '/chat',                          icon: 'chat',       section: 'Omnichannel IA' },
       { label: 'Agentes de IA',          href: '/agentes',                       icon: 'robot',      section: 'Omnichannel IA' },
       { label: 'Motor de Campanhas',     href: '/campanhas',                     icon: 'megaphone',  section: 'Omnichannel IA' },
+      { label: 'Radar B2B',              href: '/radar-b2b',                     icon: 'radar',      section: 'Omnichannel IA' },
       // Operação (acesso total)
       { label: 'Kanban — Funil',         href: '/operacao',                      icon: 'kanban',     section: 'Operação'      },
       // Admin
@@ -37,6 +38,7 @@ export function getNavItems(role: Role): NavItem[] {
       { label: 'Dashboard Financeiro',   href: '/financeiro',                    icon: 'chart',      section: 'Visão Geral'   },
       { label: 'Caixa de Entrada',       href: '/chat',                          icon: 'chat',       section: 'Omnichannel IA' },
       { label: 'Motor de Campanhas',     href: '/campanhas',                     icon: 'megaphone',  section: 'Omnichannel IA' },
+      { label: 'Radar B2B',              href: '/radar-b2b',                     icon: 'radar',      section: 'Omnichannel IA' },
       { label: 'Auditoria de Fotos',     href: '/financeiro/auditoria',          icon: 'audit',      section: 'Financeiro'    },
       { label: 'Kanban — Funil',         href: '/operacao',                      icon: 'kanban',     section: 'Operação'      },
       { label: 'Comissões',              href: '/financeiro/comissoes',          icon: 'commission', section: 'Financeiro'    },
@@ -53,6 +55,7 @@ export function getNavItems(role: Role): NavItem[] {
       { label: 'Caixa de Entrada',       href: '/chat',                          icon: 'chat',       section: 'Omnichannel IA' },
       { label: 'Agentes de IA',          href: '/agentes',                       icon: 'robot',      section: 'Omnichannel IA' },
       { label: 'Motor de Campanhas',     href: '/campanhas',                     icon: 'megaphone',  section: 'Omnichannel IA' },
+      { label: 'Radar B2B',              href: '/radar-b2b',                     icon: 'radar',      section: 'Omnichannel IA' },
       { label: 'Promotores',             href: '/admin/promotores',              icon: 'users',      section: 'Gestão'        },
       { label: 'Fila de Aprovação',      href: '/admin/promotores/aprovacoes',   icon: 'audit',      section: 'Gestão'        },
     ]
