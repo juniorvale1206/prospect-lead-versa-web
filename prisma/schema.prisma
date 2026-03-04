@@ -23,6 +23,7 @@ model Tenant {
   agents    Agent[]
   channels  Channel[]
   campaigns Campaign[]
+  tasks     Task[]
 }
 
 model User {
@@ -72,6 +73,9 @@ model User {
 
   /// Comissões liquidadas (pagamentos realizados)
   commissionPayments CommissionPayment[]
+
+  /// Tarefas atribuídas ao usuário
+  tasks Task[]
 }
 
 // ─────────────────────────────────────────────
@@ -216,6 +220,9 @@ model Lead {
 
   /// Vendas vinculadas a este lead
   sales           Sale[]
+
+  /// Tarefas de follow-up vinculadas a este lead
+  tasks           Task[]
 
   // ── Multi-tenant ──────────────────────────
   tenantId        String?
@@ -513,3 +520,50 @@ model CampaignMessage {
 
 // Relação inversa no Tenant
 
+// ─────────────────────────────────────────────
+// TAREFAS DE FOLLOW-UP (CRM Tasks)
+// ─────────────────────────────────────────────
+
+/// Tarefa de follow-up vinculada a um Lead e a um Vendedor
+model Task {
+  id          String   @id @default(cuid())
+
+  /// Título da tarefa (ex: "Ligar para Transportadora ABC")
+  title       String
+
+  /// Descrição opcional com contexto
+  description String?
+
+  /// Quando a tarefa deve ser executada
+  dueDate     DateTime
+
+  /// PENDING | IN_PROGRESS | COMPLETED | CANCELED
+  status      String   @default("PENDING")
+
+  /// CALL | EMAIL | WHATSAPP | MEETING | OTHER
+  type        String   @default("CALL")
+
+  /// Prioridade: LOW | MEDIUM | HIGH
+  priority    String   @default("MEDIUM")
+
+  /// Lead associado à tarefa
+  leadId      String
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  /// Vendedor responsável pela execução
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+
+  /// Multi-tenant
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+
+  /// Quando foi concluída
+  completedAt DateTime?
+
+  /// Notas adicionadas ao concluir
+  completionNotes String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
