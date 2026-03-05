@@ -297,6 +297,9 @@ model Lead {
   /// Tarefas de follow-up vinculadas a este lead
   tasks           Task[]
 
+  /// Ligações de IA realizadas para este lead
+  callLogs        CallLog[]
+
   // ── Multi-tenant ──────────────────────────
   tenantId        String?
   tenant          Tenant?   @relation(fields: [tenantId], references: [id])
@@ -393,6 +396,9 @@ model Agent {
 
   knowledgeBases KnowledgeBase[]
   conversations  Conversation[]
+
+  /// Ligações de IA realizadas por este agente
+  callLogs       CallLog[]
 }
 
 /// Base de conhecimento do agente (RAG)
@@ -678,4 +684,94 @@ model Task {
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────────
+// VOICE AI — Ligações Automáticas Outbound
+// ─────────────────────────────────────────────────────────────────
+
+/// Registro de uma ligação de IA realizada para um Lead
+model CallLog {
+  id              String   @id @default(cuid())
+
+  // ── Relações ─────────────────────────────────────────────────
+  /// Lead que recebeu a ligação
+  leadId          String
+  lead            Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  /// Agente de IA que realizou a ligação (prompt, voz, objetivos)
+  agentId         String?
+  agent           Agent?   @relation(fields: [agentId], references: [id])
+
+  /// Usuário do CRM que disparou a chamada
+  dispatchedById  String?
+
+  /// Multi-tenant
+  tenantId        String?
+
+  // ── Identificação no Provedor ─────────────────────────────────
+  /// ID único da chamada no provedor de Voice AI (Vapi / Bland AI)
+  providerCallId  String?  @unique
+
+  /// VAPI | BLAND | TWILIO | MOCK
+  provider        String   @default("VAPI")
+
+  // ── Status ────────────────────────────────────────────────────
+  /// QUEUED | RINGING | IN_PROGRESS | COMPLETED | NO_ANSWER | BUSY | FAILED | CANCELED
+  status          String   @default("QUEUED")
+
+  /// Código de encerramento do provedor (ex: "customer-ended-call", "assistant-error")
+  endedReason     String?
+
+  // ── Conteúdo da Ligação ───────────────────────────────────────
+  /// URL da gravação de áudio (MP3/WAV) — disponível após o encerramento
+  recordingUrl    String?
+
+  /// Transcrição completa da conversa em texto (blocos JSON ou texto plano)
+  transcript      String?
+
+  /// Resumo gerado pela IA pós-chamada (ex: "Cliente achou caro, aceitou demo terça 14h")
+  summary         String?
+
+  /// Análise de sentimento: POSITIVE | NEUTRAL | NEGATIVE
+  sentiment       String?
+
+  /// Temperatura do lead pós-ligação: COLD | WARM | HOT
+  callTemperature String?
+
+  // ── Métricas ──────────────────────────────────────────────────
+  /// Duração total em segundos
+  durationSeconds Int      @default(0)
+
+  /// Custo da ligação em centavos (cobrado pelo provedor)
+  costCents       Int      @default(0)
+
+  // ── Resultado da Ligação ──────────────────────────────────────
+  /// A IA conseguiu agendar uma reunião?
+  meetingScheduled Boolean @default(false)
+
+  /// Data/hora agendada (preenchida quando meetingScheduled=true)
+  meetingScheduledAt DateTime?
+
+  /// Notas da IA sobre o resultado (objeções, próximos passos)
+  callNotes       String?
+
+  // ── Tool Calls (funções acionadas pela IA durante a ligação) ──
+  /// JSON array com as tool calls registradas: [{name, args, result, timestamp}]
+  toolCalls       String?  @default("[]")
+
+  // ── Timestamps ────────────────────────────────────────────────
+  /// Quando a chamada foi iniciada pelo provedor
+  startedAt       DateTime?
+
+  /// Quando a chamada foi encerrada
+  endedAt         DateTime?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([leadId])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([providerCallId])
+  @@index([status])
 }
