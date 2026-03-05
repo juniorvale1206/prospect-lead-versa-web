@@ -51,6 +51,52 @@ model Tenant {
   channels     Channel[]
   campaigns    Campaign[]
   tasks        Task[]
+  integrations TenantIntegration[]
+}
+
+/// Integrações por Tenant — chaves de API de serviços externos
+/// provider: WHATSAPP_META | ASAAS | SMART_GPS | (extensível)
+model TenantIntegration {
+  id          String   @id @default(cuid())
+
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// WHATSAPP_META | ASAAS | SMART_GPS
+  provider    String
+
+  /// Rótulo amigável (ex: "WhatsApp Rastremix")
+  label       String?
+
+  /// Chave principal (Access Token, API Key)
+  apiKey      String?
+
+  /// Segredo adicional (apiSecret, webhookSecret)
+  apiSecret   String?
+
+  /// Campo auxiliar (Phone Number ID para Meta, WABA ID etc.)
+  apiKeyAux   String?
+
+  /// URL do webhook gerado pelo sistema (read-only para o tenant)
+  webhookUrl  String?
+
+  /// PRODUCTION | SANDBOX
+  environment String   @default("PRODUCTION")
+
+  /// JSON extra (baseUrl, timeout, etc.)
+  metadata    String?  @default("{}")
+
+  isActive    Boolean  @default(true)
+
+  /// Resultado do último teste de conexão
+  lastTestedAt DateTime?
+  lastTestOk   Boolean  @default(false)
+  lastTestMsg  String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, provider])
 }
 
 model User {
