@@ -455,6 +455,37 @@ model Conversation {
 
   tenantId   String?
 
+  // ── Smart Inbox / IA Qualification ──────────────────────────────────────────
+  /// Indica se o Bot IA está ativo nesta conversa (true = IA responde, false = humano assumiu)
+  isAiActive          Boolean  @default(true)
+
+  /// Lead solicitou atendimento humano ("falar com atendente", etc.)
+  fallbackRequested   Boolean  @default(false)
+
+  /// Temperatura do lead avaliada pela IA: COLD | WARM | HOT
+  leadTemperature     String?  @default("COLD")
+
+  /// Intenção de compra identificada pela IA (ex: "Quer agendar instalação")
+  buyingIntent        String?
+
+  /// Principal objeção identificada (ex: "Achou caro", "Precisa de aprovação")
+  mainObjection       String?
+
+  /// Score de engajamento 0-100 (calculado pela IA)
+  engagementScore     Int?     @default(0)
+
+  /// Número de trocas de mensagem desde a última qualificação IA
+  messagesSinceLastQualification Int @default(0)
+
+  /// Quando foi a última qualificação pela IA
+  lastQualifiedAt     DateTime?
+
+  /// Timestamp da última mensagem NOSSA (bot ou humano) — usado pelo cron de follow-up
+  lastOurMessageAt    DateTime?
+
+  /// Quantas vezes o follow-up automático foi enviado
+  followupCount       Int      @default(0)
+
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -466,7 +497,7 @@ model Message {
   id             String   @id @default(cuid())
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  /// USER | BOT | HUMAN
+  /// USER | BOT | HUMAN | SYSTEM
   senderType     String
   /// Nome do remetente (para exibição na timeline)
   senderName     String   @default("")
@@ -477,6 +508,14 @@ model Message {
   mediaUrl       String?
   /// Lida pelo operador?
   read           Boolean  @default(false)
+
+  // ── Nota Interna (Smart Inbox) ────────────────────────────────────────────
+  /// Nota interna da equipe — NÃO enviada ao cliente (fundo amarelo na UI)
+  isInternalNote Boolean  @default(false)
+
+  /// Reação/emoji ao hover (futuro)
+  reaction       String?
+
   timestamp      DateTime @default(now())
 }
 
