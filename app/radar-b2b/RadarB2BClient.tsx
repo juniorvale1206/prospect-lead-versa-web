@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import type { CnpjEnrichmentResult, PlaceItem } from '@/lib/services/b2b-search.service'
 
@@ -25,18 +25,107 @@ interface SearchResult extends PlaceItem {
 // ─────────────────────────────────────────────────────────────────────────────
 // Dados estáticos
 // ─────────────────────────────────────────────────────────────────────────────
-const CNAES = [
-  { code: '4930-2/02', label: '4930-2/02 — Transporte rodoviário de carga, exceto produtos perigosos e mudanças' },
-  { code: '4930-2/01', label: '4930-2/01 — Transporte rodoviário de carga, exceto mudanças' },
-  { code: '7711-0/00', label: '7711-0/00 — Locação de automóveis sem condutor' },
-  { code: '4921-3/02', label: '4921-3/02 — Transporte rodoviário — fretamento intermunicipal' },
-  { code: '5212-5/00', label: '5212-5/00 — Carga e descarga, armazéns gerais' },
-  { code: '5231-1/02', label: '5231-1/02 — Operações de terminais e estações rodoviárias' },
-  { code: '8020-0/02', label: '8020-0/02 — Outras atividades de serviços de segurança' },
-  { code: '4511-1/01', label: '4511-1/01 — Comércio de automóveis, camionetas e utilitários novos' },
-  { code: '3317-1/01', label: '3317-1/01 — Manutenção de locomotivas, vagões e outros' },
-  { code: '8591-1/00', label: '8591-1/00 — Cursos de pilotagem e náutica' },
+// ─────────────────────────────────────────────────────────────────────────────
+// BANCO DE CNAEs — organizados por segmento (relevantes para telemetria)
+// ─────────────────────────────────────────────────────────────────────────────
+interface CnaeOption { code: string; label: string; grupo: string; keywords: string }
+
+const CNAES_DB: CnaeOption[] = [
+  // ── Transportadoras & Logística ──
+  { code: '4930-2/01', label: '4930-2/01 — Transporte rodoviário de carga', grupo: '🚛 Transportadoras', keywords: 'transportadora carga frete logística caminhão caminhoneiro' },
+  { code: '4930-2/02', label: '4930-2/02 — Transporte rodoviário de produtos perigosos', grupo: '🚛 Transportadoras', keywords: 'transportadora produtos perigosos inflamável químico carga' },
+  { code: '4930-2/03', label: '4930-2/03 — Transporte rodoviário de mudanças', grupo: '🚛 Transportadoras', keywords: 'mudança transporte rodoviário' },
+  { code: '4940-0/00', label: '4940-0/00 — Transporte dutoviário', grupo: '🚛 Transportadoras', keywords: 'duto gasoduto oleoduto transporte' },
+  { code: '5212-5/00', label: '5212-5/00 — Carga e descarga / Armazéns gerais', grupo: '🚛 Transportadoras', keywords: 'carga descarga armazém estoque logística' },
+  { code: '5231-1/01', label: '5231-1/01 — Administração da infra-estrutura portuária', grupo: '🚛 Transportadoras', keywords: 'porto logística transporte marítimo' },
+  { code: '5231-1/02', label: '5231-1/02 — Operações de terminais rodoviários', grupo: '🚛 Transportadoras', keywords: 'terminal rodoviário transporte logística' },
+  { code: '5250-8/02', label: '5250-8/02 — Gestão de terminais aquaviários', grupo: '🚛 Transportadoras', keywords: 'aquaviário terminal logística' },
+  { code: '5310-5/01', label: '5310-5/01 — Atividades de Correios', grupo: '🚛 Transportadoras', keywords: 'correio entrega logística last mile' },
+  { code: '5320-2/01', label: '5320-2/01 — Serviços de entrega rápida', grupo: '🚛 Transportadoras', keywords: 'entrega rápida motoboy courier last mile' },
+
+  // ── Ônibus, Fretamento & Transporte de Passageiros ──
+  { code: '4921-3/01', label: '4921-3/01 — Transporte rodoviário coletivo urbano', grupo: '🚌 Ônibus & Passageiros', keywords: 'ônibus transporte coletivo urbano passageiro' },
+  { code: '4921-3/02', label: '4921-3/02 — Transporte rodoviário — fretamento intermunicipal', grupo: '🚌 Ônibus & Passageiros', keywords: 'fretamento ônibus intermunicipal passageiro viagem' },
+  { code: '4922-1/01', label: '4922-1/01 — Transporte rodoviário de passageiros, regular, urbano', grupo: '🚌 Ônibus & Passageiros', keywords: 'passageiro transporte urbano ônibus' },
+  { code: '4922-1/02', label: '4922-1/02 — Transporte escolar', grupo: '🚌 Ônibus & Passageiros', keywords: 'escolar van ônibus transporte criança aluno' },
+  { code: '4923-0/02', label: '4923-0/02 — Serviço de táxi', grupo: '🚌 Ônibus & Passageiros', keywords: 'táxi uber transporte passageiro' },
+  { code: '4929-9/04', label: '4929-9/04 — Organização de excursões', grupo: '🚌 Ônibus & Passageiros', keywords: 'excursão turismo transporte passeio' },
+
+  // ── Rastreamento & Tecnologia ──
+  { code: '6190-6/99', label: '6190-6/99 — Outras atividades de telecomunicações', grupo: '📡 Rastreamento & TI', keywords: 'rastreamento telemetria gps tecnologia telecomunicações monitoramento' },
+  { code: '6204-0/00', label: '6204-0/00 — Consultoria em TI', grupo: '📡 Rastreamento & TI', keywords: 'rastreamento tecnologia TI consultoria software sistema' },
+  { code: '6209-1/00', label: '6209-1/00 — Suporte técnico, manutenção de TI', grupo: '📡 Rastreamento & TI', keywords: 'suporte técnico manutenção rastreamento sistema gps' },
+  { code: '6311-9/00', label: '6311-9/00 — Tratamento de dados / Data center', grupo: '📡 Rastreamento & TI', keywords: 'dados telemetria monitoramento tecnologia iot' },
+  { code: '6319-4/00', label: '6319-4/00 — Portais, provedores de internet e hospedagem', grupo: '📡 Rastreamento & TI', keywords: 'internet tecnologia nuvem cloud iot telemetria' },
+  { code: '6399-1/99', label: '6399-1/99 — Outras atividades de inf. não especificadas', grupo: '📡 Rastreamento & TI', keywords: 'rastreamento telemetria gps sistema monitoramento frota' },
+  { code: '7490-1/04', label: '7490-1/04 — Atividades de intermediação e agenciamento', grupo: '📡 Rastreamento & TI', keywords: 'rastreamento telemetria serviço tecnologia' },
+
+  // ── Segurança ──
+  { code: '8011-1/01', label: '8011-1/01 — Atividades de vigilância e segurança privada', grupo: '🔒 Segurança', keywords: 'segurança vigilância monitoramento câmera privada' },
+  { code: '8011-1/02', label: '8011-1/02 — Serviços de adestramento de cães de guarda', grupo: '🔒 Segurança', keywords: 'segurança guarda proteção' },
+  { code: '8020-0/01', label: '8020-0/01 — Atividades de monitoramento de sistemas de segurança', grupo: '🔒 Segurança', keywords: 'monitoramento câmera alarme segurança rastreamento' },
+  { code: '8020-0/02', label: '8020-0/02 — Outras atividades de serviços de segurança', grupo: '🔒 Segurança', keywords: 'segurança vigilância escolta blindagem monitoramento' },
+  { code: '8030-7/00', label: '8030-7/00 — Atividades de investigação particular', grupo: '🔒 Segurança', keywords: 'investigação detetive monitoramento segurança' },
+
+  // ── Mineração & Extração ──
+  { code: '0510-8/00', label: '0510-8/00 — Extração de carvão mineral', grupo: '⛏️ Mineração', keywords: 'mineração carvão extração mina' },
+  { code: '0600-0/01', label: '0600-0/01 — Extração de petróleo e gás natural', grupo: '⛏️ Mineração', keywords: 'petróleo gás extração mineração offshore' },
+  { code: '0710-3/01', label: '0710-3/01 — Extração de minério de ferro', grupo: '⛏️ Mineração', keywords: 'mineração ferro minério mina Vale' },
+  { code: '0721-9/01', label: '0721-9/01 — Extração de minério de alumínio', grupo: '⛏️ Mineração', keywords: 'mineração alumínio minério bauxita' },
+  { code: '0810-0/10', label: '0810-0/10 — Extração de granito e rochas ornamentais', grupo: '⛏️ Mineração', keywords: 'mineração granito pedra extração' },
+  { code: '0890-6/01', label: '0890-6/01 — Extração de minerais para fabricação de fertilizantes', grupo: '⛏️ Mineração', keywords: 'mineração fertilizante extração mineral' },
+
+  // ── Construção & Engenharia ──
+  { code: '4110-7/00', label: '4110-7/00 — Incorporação de empreendimentos imobiliários', grupo: '🏗️ Construção & Engenharia', keywords: 'construção engenharia obra incorporadora imóvel' },
+  { code: '4120-4/00', label: '4120-4/00 — Construção de edifícios', grupo: '🏗️ Construção & Engenharia', keywords: 'construção engenharia obra edifício prédio' },
+  { code: '4211-1/01', label: '4211-1/01 — Construção de rodovias e ferrovias', grupo: '🏗️ Construção & Engenharia', keywords: 'construção rodovia estrada ferrovia engenharia' },
+  { code: '4212-0/00', label: '4212-0/00 — Construção de obras de arte especiais', grupo: '🏗️ Construção & Engenharia', keywords: 'ponte viaduto engenharia obra civil' },
+  { code: '4213-8/00', label: '4213-8/00 — Obras de urbanização', grupo: '🏗️ Construção & Engenharia', keywords: 'urbanização engenharia obra saneamento' },
+  { code: '4221-9/01', label: '4221-9/01 — Construção de barragens e represas', grupo: '🏗️ Construção & Engenharia', keywords: 'barragem represa hidrelétrica engenharia obra' },
+  { code: '4299-5/99', label: '4299-5/99 — Outras obras de engenharia civil', grupo: '🏗️ Construção & Engenharia', keywords: 'engenharia civil obra construção' },
+  { code: '7112-0/00', label: '7112-0/00 — Serviços de engenharia', grupo: '🏗️ Construção & Engenharia', keywords: 'engenharia consultoria projeto técnico' },
+
+  // ── Agronegócio & Agrofrota ──
+  { code: '0111-3/01', label: '0111-3/01 — Cultivo de arroz', grupo: '🌾 Agronegócio', keywords: 'agro agricultura fazenda rural produtor' },
+  { code: '0151-2/01', label: '0151-2/01 — Criação de bovinos para corte', grupo: '🌾 Agronegócio', keywords: 'agro fazenda gado bovino pecuária' },
+  { code: '0161-0/00', label: '0161-0/00 — Atividades de apoio à agricultura', grupo: '🌾 Agronegócio', keywords: 'agro agricultura serviço apoio fazenda' },
+  { code: '0162-8/99', label: '0162-8/99 — Atividades de apoio à pecuária', grupo: '🌾 Agronegócio', keywords: 'pecuária fazenda gado animal veterinário' },
+  { code: '0163-6/00', label: '0163-6/00 — Atividades pós-colheita', grupo: '🌾 Agronegócio', keywords: 'agro colheita beneficiamento grão cereal' },
+  { code: '4612-1/00', label: '4612-1/00 — Comércio de insumos agropecuários', grupo: '🌾 Agronegócio', keywords: 'agro insumo fertilizante defensivo agrícola' },
+
+  // ── Locação de Veículos & Frotas ──
+  { code: '7711-0/00', label: '7711-0/00 — Locação de automóveis sem condutor', grupo: '🚗 Locação & Frotas', keywords: 'locação aluguel carro veículo frota rent a car' },
+  { code: '7719-5/99', label: '7719-5/99 — Locação de outros meios de transporte', grupo: '🚗 Locação & Frotas', keywords: 'locação aluguel veículo caminhão ônibus frota' },
+  { code: '7731-4/00', label: '7731-4/00 — Locação de máquinas e equipamentos agrícolas', grupo: '🚗 Locação & Frotas', keywords: 'locação máquina agrícola frota aluguel' },
+  { code: '7732-2/01', label: '7732-2/01 — Locação de máquinas e equipamentos para construção', grupo: '🚗 Locação & Frotas', keywords: 'locação máquina construção equipamento frota aluguel' },
+  { code: '4511-1/01', label: '4511-1/01 — Comércio de automóveis e utilitários novos', grupo: '🚗 Locação & Frotas', keywords: 'carro veículo automóvel concessionária frota' },
+  { code: '4512-9/01', label: '4512-9/01 — Comércio de automóveis usados', grupo: '🚗 Locação & Frotas', keywords: 'carro usado veículo frota revenda' },
+  { code: '4541-2/01', label: '4541-2/01 — Comércio de motocicletas novas', grupo: '🚗 Locação & Frotas', keywords: 'moto motocicleta frota entrega' },
+
+  // ── Saúde & Ambulância ──
+  { code: '8610-1/01', label: '8610-1/01 — Atividades de atendimento hospitalar', grupo: '🏥 Saúde', keywords: 'hospital saúde ambulância UTI móvel frota' },
+  { code: '8621-6/01', label: '8621-6/01 — UTI Móvel', grupo: '🏥 Saúde', keywords: 'ambulância UTI móvel saúde urgência frota' },
+  { code: '8621-6/02', label: '8621-6/02 — Serviços Móveis de Atendimento Urgência', grupo: '🏥 Saúde', keywords: 'samu ambulância urgência saúde' },
+
+  // ── Manutenção Veicular ──
+  { code: '4520-0/01', label: '4520-0/01 — Serviços de manutenção de veículos', grupo: '🔧 Manutenção Veicular', keywords: 'manutenção veículo mecânica oficina auto center' },
+  { code: '4520-0/02', label: '4520-0/02 — Serviços de lanternagem ou funilaria', grupo: '🔧 Manutenção Veicular', keywords: 'funilaria lanternagem funileiro pintura veículo' },
+  { code: '4530-7/01', label: '4530-7/01 — Comércio por atacado de peças para veículos', grupo: '🔧 Manutenção Veicular', keywords: 'peças auto peças veículo caminhão ônibus' },
+  { code: '3317-1/01', label: '3317-1/01 — Manutenção de locomotivas, vagões e material rodante', grupo: '🔧 Manutenção Veicular', keywords: 'ferrovia locomotiva vagão manutenção rail' },
+  { code: '3319-8/00', label: '3319-8/00 — Manutenção de outras máquinas e equipamentos', grupo: '🔧 Manutenção Veicular', keywords: 'manutenção máquina equipamento industrial' },
+
+  // ── Indústria & Manufatura ──
+  { code: '2910-7/01', label: '2910-7/01 — Fabricação de automóveis, camionetas e utilitários', grupo: '🏭 Indústria', keywords: 'fabricação automóvel veículo montadora industria' },
+  { code: '2920-4/01', label: '2920-4/01 — Fabricação de caminhões e ônibus', grupo: '🏭 Indústria', keywords: 'fabricação caminhão ônibus veículo montadora industria' },
+  { code: '2930-1/01', label: '2930-1/01 — Fabricação de cabines, carrocerias para caminhões', grupo: '🏭 Indústria', keywords: 'carroceria caminhão fabricação indústria' },
+  { code: '2731-7/00', label: '2731-7/00 — Fabricação de aparelhos e equipamentos elétricos', grupo: '🏭 Indústria', keywords: 'fabricação equipamento eletrônico elétrico sensor' },
+  { code: '2759-7/01', label: '2759-7/01 — Fabricação de aparelhos eletrodomésticos', grupo: '🏭 Indústria', keywords: 'fabricação eletrodoméstico eletrônico' },
 ]
+
+// Mapa de grupos para exibição organizada
+const _grupoSet = new Set(CNAES_DB.map(c => c.grupo))
+const CNAE_GRUPOS: string[] = []
+_grupoSet.forEach(g => CNAE_GRUPOS.push(g))
 
 const UFS = [
   'AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG',
@@ -56,7 +145,9 @@ export default function RadarB2BClient({ session }: { session: Session }) {
   const [mapLocation, setMapLocation] = useState('São Paulo SP')
 
   // ── Filtros — CNAE ─────────────────────────────────────────────────────────
-  const [selectedCnae, setSelectedCnae] = useState(CNAES[0].code)
+  const [selectedCnae, setSelectedCnae] = useState(CNAES_DB[0].code)
+  const [cnaeSearch,   setCnaeSearch]   = useState('')
+  const [cnaeDropOpen, setCnaeDropOpen] = useState(false)
   const [cnaeUf,       setCnaeUf]       = useState('SP')
   const [cnaeCity,     setCnaeCity]     = useState('')
 
@@ -77,7 +168,40 @@ export default function RadarB2BClient({ session }: { session: Session }) {
 
   // ── Import toast ──────────────────────────────────────────────────────────
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
-  const toastTimer = useRef<NodeJS.Timeout | null>(null)
+  const toastTimer    = useRef<NodeJS.Timeout | null>(null)
+  const cnaeDropRef   = useRef<HTMLDivElement>(null)
+
+  // ── CNAE filtrado por busca ────────────────────────────────────────────────
+  const filteredCnaes = useMemo(() => {
+    const q = cnaeSearch.toLowerCase().trim()
+    if (!q) return CNAES_DB
+    return CNAES_DB.filter(c =>
+      c.keywords.toLowerCase().includes(q) ||
+      c.label.toLowerCase().includes(q) ||
+      c.code.includes(q) ||
+      c.grupo.toLowerCase().includes(q)
+    )
+  }, [cnaeSearch])
+
+  // Fechar dropdown ao clicar fora
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (cnaeDropRef.current && !cnaeDropRef.current.contains(e.target as Node)) {
+        setCnaeDropOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  // Label do CNAE selecionado
+  const selectedCnaeLabel = useMemo(() =>
+    CNAES_DB.find(c => c.code === selectedCnae)?.label ?? selectedCnae
+  , [selectedCnae])
+
+  const selectedCnaeGrupo = useMemo(() =>
+    CNAES_DB.find(c => c.code === selectedCnae)?.grupo ?? ''
+  , [selectedCnae])
 
   function showToast(msg: string, type: 'success' | 'error' = 'success') {
     setToast({ msg, type })
@@ -377,22 +501,117 @@ export default function RadarB2BClient({ session }: { session: Session }) {
           {/* ── Aba: Filtro por CNAE ───────────────────────────────────── */}
           {activeTab === 'cnae' && (
             <div className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="sm:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">CNAE Principal</label>
-                  <select
-                    value={selectedCnae}
-                    onChange={e => setSelectedCnae(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 relative">
+                {/* ── CnaeCombobox ── */}
+                <div className="sm:col-span-2" ref={cnaeDropRef}>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Segmento / CNAE
+                  </label>
+
+                  {/* Trigger button */}
+                  <button
+                    type="button"
+                    onClick={() => { setCnaeDropOpen(o => !o); setCnaeSearch('') }}
+                    className="w-full flex items-center justify-between gap-2 border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white hover:border-green-500 focus:outline-none focus:ring-2 focus:ring-green-500 transition-colors text-left"
                   >
-                    {CNAES.map(c => (
-                      <option key={c.code} value={c.code}>{c.label}</option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-gray-400 mt-1">
-                    Focado em transporte, logística, mineração e segurança — alinhado ao nicho de telemetria
-                  </p>
+                    <span className="flex items-center gap-2 min-w-0 flex-1">
+                      <span className="text-base flex-shrink-0">{selectedCnaeGrupo.split(' ')[0]}</span>
+                      <span className="truncate text-gray-800">{selectedCnaeLabel}</span>
+                    </span>
+                    <svg className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform ${cnaeDropOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/>
+                    </svg>
+                  </button>
+
+                  {/* Dropdown */}
+                  {cnaeDropOpen && (
+                    <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl w-full max-w-xl overflow-hidden"
+                      style={{ maxHeight: '420px' }}
+                    >
+                      {/* Search input */}
+                      <div className="p-3 border-b border-gray-100 sticky top-0 bg-white">
+                        <div className="relative">
+                          <svg className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                          </svg>
+                          <input
+                            autoFocus
+                            type="text"
+                            value={cnaeSearch}
+                            onChange={e => setCnaeSearch(e.target.value)}
+                            placeholder="Buscar: transportadora, mineração, engenharia, rastreamento..."
+                            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                          />
+                          {cnaeSearch && (
+                            <button onClick={() => setCnaeSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1.5">
+                          {filteredCnaes.length} CNAEs encontrados
+                          {cnaeSearch ? ` para "${cnaeSearch}"` : ''}
+                        </p>
+                      </div>
+
+                      {/* Results list */}
+                      <div className="overflow-y-auto" style={{ maxHeight: '320px' }}>
+                        {filteredCnaes.length === 0 ? (
+                          <div className="p-6 text-center">
+                            <p className="text-sm text-gray-500">Nenhum CNAE encontrado</p>
+                            <p className="text-xs text-gray-400 mt-1">Tente: "transporte", "segurança", "construção"</p>
+                          </div>
+                        ) : (
+                          (() => {
+                            const gruposSet = new Set(filteredCnaes.map(c => c.grupo))
+                            const grupos: string[] = []
+                            gruposSet.forEach(g => grupos.push(g))
+                            return grupos.map(grupo => (
+                              <div key={grupo}>
+                                <div className="px-3 py-1.5 bg-gray-50 border-b border-gray-100 sticky top-0">
+                                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{grupo}</p>
+                                </div>
+                                {filteredCnaes.filter(c => c.grupo === grupo).map(c => (
+                                  <button
+                                    key={c.code}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedCnae(c.code)
+                                      setCnaeDropOpen(false)
+                                      setCnaeSearch('')
+                                    }}
+                                    className={`w-full text-left px-4 py-2.5 hover:bg-green-50 transition-colors flex items-start gap-3 ${
+                                      selectedCnae === c.code ? 'bg-green-50 border-l-2 border-green-500' : ''
+                                    }`}
+                                  >
+                                    <span className="font-mono text-xs text-gray-400 flex-shrink-0 mt-0.5 w-20">{c.code}</span>
+                                    <span className="text-sm text-gray-800 leading-tight flex-1">
+                                      {c.label.split('—').slice(1).join('—').trim()}
+                                    </span>
+                                    {selectedCnae === c.code && (
+                                      <svg className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7"/>
+                                      </svg>
+                                    )}
+                                  </button>
+                                ))}
+                              </div>
+                            ))
+                          })()
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Selected info badge */}
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full px-2.5 py-0.5">
+                      {selectedCnaeGrupo}
+                    </span>
+                    <span className="text-xs text-gray-400 font-mono">{selectedCnae}</span>
+                  </div>
                 </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">UF</label>
                   <select
