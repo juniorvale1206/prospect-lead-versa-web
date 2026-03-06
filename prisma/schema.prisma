@@ -149,6 +149,9 @@ model User {
 
   /// Tarefas atribuídas ao usuário
   tasks Task[]
+
+  /// Turnos de trabalho (promotor de rua)
+  shifts PromoterShift[]
 }
 
 // ─────────────────────────────────────────────
@@ -774,4 +777,97 @@ model CallLog {
   @@index([tenantId, createdAt(sort: Desc)])
   @@index([providerCallId])
   @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROMOTER SHIFT — Controle de Turno do Promotor de Rua
+// ─────────────────────────────────────────────────────────────────────────────
+/// Registro de cada turno de trabalho de um promotor.
+/// Um turno é criado quando o promotor faz check-in e encerrado no check-out.
+model PromoterShift {
+  id          String   @id @default(cuid())
+
+  /// Promotor que está em turno
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Multi-tenant
+  tenantId    String?
+
+  // ── Status do Turno ─────────────────────────────────────────────────────
+  /// ACTIVE | PAUSED_BY_INACTIVITY | PAUSED_BY_USER | ENDED
+  status      String   @default("ACTIVE")
+
+  // ── Timestamps do turno ─────────────────────────────────────────────────
+  /// Início do turno (check-in)
+  startedAt   DateTime @default(now())
+
+  /// Fim do turno (check-out)
+  endedAt     DateTime?
+
+  /// Quando foi pausado por ociosidade (útil para cálculo)
+  pausedAt    DateTime?
+
+  /// Quantas vezes foi pausado por inatividade neste turno
+  inactivityPauseCount Int @default(0)
+
+  // ── Métricas do turno ───────────────────────────────────────────────────
+  /// Leads cadastrados neste turno
+  leadsCount  Int      @default(0)
+
+  /// Localização do promotor ao fazer check-in (lat,lng ou endereço)
+  checkInLocation  String?
+
+  /// Localização ao fazer check-out
+  checkOutLocation String?
+
+  /// Observações do promotor ou do sistema
+  notes       String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([status, updatedAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ALERT LOG — Alertas gerados pelo sistema (ociosidade, metas, etc.)
+// ─────────────────────────────────────────────────────────────────────────────
+model AlertLog {
+  id          String   @id @default(cuid())
+
+  /// Tenant ao qual pertence o alerta
+  tenantId    String?
+
+  /// Usuário que GEROU o alerta (ex: o promotor ocioso)
+  subjectUserId   String?
+
+  /// Tipo de alerta
+  /// INACTIVITY | SHIFT_STARTED | SHIFT_ENDED | GOAL_REACHED | GOAL_MISSED
+  type        String
+
+  /// Título curto do alerta (para listagem)
+  title       String
+
+  /// Mensagem completa do alerta
+  message     String
+
+  /// Dados extras em JSON (ex: {"leadsCount": 3, "shiftId": "xxx"})
+  metadata    String?  @default("{}")
+
+  /// Alerta foi visualizado/resolvido pelo gestor?
+  resolved    Boolean  @default(false)
+  resolvedAt  DateTime?
+  resolvedById String?
+
+  /// Severidade: INFO | WARNING | CRITICAL
+  severity    String   @default("WARNING")
+
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, resolved, createdAt(sort: Desc)])
+  @@index([subjectUserId, createdAt(sort: Desc)])
+  @@index([type, resolved])
 }

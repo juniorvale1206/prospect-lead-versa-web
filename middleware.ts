@@ -38,6 +38,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // ── Cron Jobs (autenticação via CRON_SECRET no query param) ──────────────
+  // Cada handler verifica internamente o secret — não depende de cookie
+  if (pathname.startsWith('/api/cron/')) {
+    return NextResponse.next()
+  }
+
   // Rotas públicas - não precisa de autenticação
   const publicRoutes = ['/login', '/api/auth/login']
   if (publicRoutes.some((route) => pathname.startsWith(route))) {
@@ -107,6 +113,6 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     // Exclui assets estáticos, rotas de auth e rotas mobile (têm seu próprio auth via Bearer)
-    '/((?!_next/static|_next/image|favicon.ico|uploads|api/auth/login|api/auth/logout|api/mobile|api/webhooks).*)',
+    '/((?!_next/static|_next/image|favicon.ico|uploads|api/auth/login|api/auth/logout|api/mobile|api/webhooks|api/cron).*)',
   ],
 }
