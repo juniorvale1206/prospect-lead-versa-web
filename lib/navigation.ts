@@ -32,6 +32,8 @@ export function getNavItems(role: Role): NavItem[] {
       { label: 'Comissões & KYC',        href: '/financeiro/comissoes',          icon: 'commission', section: 'Financeiro'    },
       { label: 'Revisão KYC',            href: '/admin/kyc',                     icon: 'shield',     section: 'Financeiro'    },
       { label: 'Saques PIX',             href: '/financeiro/saques',             icon: 'wallet',     section: 'Financeiro'    },
+      // Rede PDV
+      { label: 'Leads PDV',              href: '/admin/leads/pdv',               icon: 'building',   section: 'Rede PDV'      },
     ]
   }
 
@@ -48,6 +50,7 @@ export function getNavItems(role: Role): NavItem[] {
       { label: 'Revisão KYC',            href: '/admin/kyc',                     icon: 'shield',     section: 'Financeiro'    },
       { label: 'Extratos',               href: '/financeiro/extratos',           icon: 'extract',    section: 'Financeiro'    },
       { label: 'Saques PIX',             href: '/financeiro/saques',             icon: 'wallet',     section: 'Financeiro'    },
+      { label: 'Leads PDV',              href: '/admin/leads/pdv',               icon: 'building',   section: 'Rede PDV'      },
     ]
   }
 
@@ -63,6 +66,7 @@ export function getNavItems(role: Role): NavItem[] {
       { label: 'Radar B2B',              href: '/radar-b2b',                     icon: 'radar',      section: 'Omnichannel IA' },
       { label: 'Promotores',             href: '/admin/promotores',              icon: 'users',      section: 'Gestão'        },
       { label: 'Fila de Aprovação',      href: '/admin/promotores/aprovacoes',   icon: 'audit',      section: 'Gestão'        },
+      { label: 'Leads PDV',              href: '/admin/leads/pdv',               icon: 'building',   section: 'Rede PDV'      },
     ]
   }
 
