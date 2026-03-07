@@ -52,6 +52,13 @@ model Tenant {
   campaigns    Campaign[]
   tasks        Task[]
   integrations TenantIntegration[]
+
+  /// PDVs (Postos/Lojas parceiras) vinculados ao tenant
+  partnerStores PartnerStore[]
+
+  /// Taxa de comissão de rede (%) paga ao Promotor-Gerente do PDV
+  /// Padrão: 10.0 (R$ 10,00 em uma venda de R$ 100,00)
+  networkCommissionPct Float @default(10.0)
 }
 
 /// Integrações por Tenant — chaves de API de serviços externos
@@ -152,6 +159,9 @@ model User {
 
   /// Turnos de trabalho (promotor de rua)
   shifts PromoterShift[]
+
+  /// PDVs que este promotor gerencia (relação de rede)
+  managedStores PartnerStore[] @relation("ManagerPromoter")
 }
 
 // ─────────────────────────────────────────────
@@ -237,8 +247,13 @@ model Lead {
   // ── Qualificação / dores ──────────────────
   doresIdentificadas String?
 
+  // ── PDV de origem (Modo Frentista) ────────
+  /// PDV que gerou o lead (null = lead direto do promotor)
+  pdvId           String?
+  pdv             PartnerStore? @relation(fields: [pdvId], references: [id])
+
   // ── Prospecção Ativa B2B (Radar) ──────────
-  /// MANUAL | PROSPECCAO_ATIVA | INDICACAO | CAMPANHA_WPP | API
+  /// MANUAL | PROSPECCAO_ATIVA | INDICACAO | CAMPANHA_WPP | API | PDV
   sourceType      String    @default("MANUAL")
   /// CNAE principal da empresa (ex: "4930-2/02")
   cnae            String?
@@ -361,20 +376,121 @@ model Sale {
 // Criado automaticamente pelo webhook IA ao confirmar resposta do lead.
 model CommissionLedger {
   id          String   @id @default(cuid())
+
   /// Promotor que recebe o crédito
   promotorId  String
+
   /// Lead que gerou a comissão
   leadId      String
+
+  /// Venda vinculada (opcional — preenchida na SALE_CONVERTED)
+  saleId      String?
+
+  // ── Tipo de Comissão ──────────────────────────────────────────────────────
+  /// DIRECT_SALE       → comissão padrão do frentista/promotor pela venda
+  /// PDV_NETWORK_SALE  → comissão de rede/gestão do Promotor-Gerente do PDV
+  /// IA_RESPONSE_WITH_PHOTO | IA_RESPONSE_NO_PHOTO | MANUAL_ADJUSTMENT
+  commissionType String @default("DIRECT_SALE")
+
+  /// PDV que originou a comissão de rede (null para comissões diretas)
+  pdvId       String?
+  pdv         PartnerStore? @relation(fields: [pdvId], references: [id])
+
   /// IA_RESPONSE_WITH_PHOTO | IA_RESPONSE_NO_PHOTO | MANUAL_ADJUSTMENT | SALE_CONVERTED
   eventType   String
+
   /// Valor em R$ (positivo = crédito, negativo = estorno)
   amount      Float
+
   /// Texto legível no extrato do promotor
   description String
+
   /// PENDING (aguarda liquidação) | PAID (liquidado no fechamento mensal)
   status      String   @default("PENDING")
+
   tenantId    String?
   createdAt   DateTime @default(now())
+
+  @@index([promotorId, status])
+  @@index([saleId])
+  @@index([pdvId])
+  @@index([commissionType, status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PARTNER STORE — PDV (Posto de Gasolina / Loja Parceira) no Modo Frentista
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// MODELO DE COMISSÃO DE REDE:
+//   Um Promotor (SDR de rua) pode cadastrar e gerenciar N PDVs.
+//   Quando um lead originado de um PDV converte em venda:
+//     • Comissão DIRETA  → vai para o frentista que fechou a venda
+//     • Comissão de REDE → vai para o Promotor-Gerente do PDV
+//
+// FLUXO:
+//   Lead.pdvId → PartnerStore.managerPromoterId → CommissionLedger (PDV_NETWORK_SALE)
+//
+model PartnerStore {
+  id          String   @id @default(cuid())
+
+  // ── Identificação ─────────────────────────────────────────────────────────
+  /// Nome comercial do PDV (ex: "Posto Ipiranga Centro", "Loja X")
+  name        String
+
+  /// CNPJ do estabelecimento (opcional)
+  cnpj        String?
+
+  /// Endereço completo
+  address     String?
+  cidade      String?
+  uf          String?
+
+  // ── Contato do responsável local ──────────────────────────────────────────
+  ownerName   String?
+  ownerPhone  String?
+
+  // ── Tipo ──────────────────────────────────────────────────────────────────
+  /// POSTO_COMBUSTIVEL | LOJA_VAREJO | OFICINA | TRANSPORTADORA | OUTROS
+  storeType   String   @default("POSTO_COMBUSTIVEL")
+
+  // ── Status ────────────────────────────────────────────────────────────────
+  /// ACTIVE | INACTIVE | SUSPENDED
+  status      String   @default("ACTIVE")
+
+  // ── RELAÇÃO DE REDE: Promotor-Gerente ─────────────────────────────────────
+  /// Promotor responsável pelo cadastro e gestão deste PDV.
+  /// Recebe a "Comissão de Rede" em toda venda originada aqui.
+  managerPromoterId String?
+  managerPromoter   User?   @relation("ManagerPromoter", fields: [managerPromoterId], references: [id])
+
+  // ── Taxa de comissão de rede específica deste PDV ─────────────────────────
+  /// Se null, usa o valor padrão do Tenant (networkCommissionPct)
+  /// Se definido, sobrescreve o padrão do tenant para este PDV
+  customNetworkCommissionPct Float?
+
+  // ── Multi-tenant ──────────────────────────────────────────────────────────
+  tenantId    String?
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id])
+
+  // ── Relações ──────────────────────────────────────────────────────────────
+  /// Leads captados neste PDV
+  leads       Lead[]
+
+  /// Entradas do extrato de comissão de rede geradas por este PDV
+  commissionLedgerEntries CommissionLedger[]
+
+  // ── Métricas ──────────────────────────────────────────────────────────────
+  /// Total de leads captados (denormalized counter, atualizado via trigger)
+  totalLeads  Int      @default(0)
+  /// Total de vendas convertidas (denormalized counter)
+  totalSales  Int      @default(0)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([managerPromoterId])
+  @@index([cnpj])
 }
 
 // ─────────────────────────────────────────────

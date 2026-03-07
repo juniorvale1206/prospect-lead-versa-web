@@ -3,23 +3,31 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Fecha uma venda no aplicativo mobile do promotor.
  *
- * OPERAÇÃO ATÔMICA ($transaction):
+ * OPERAÇÃO ATÔMICA via CommissionService ($transaction):
  *   1. Cria o registro na tabela Sale
- *   2. Atualiza o Lead: funnelStage='CONVERTIDO', status='VENDIDO'
- *   3. Lança a comissão no CommissionLedger (PENDING, evento SALE_CONVERTED)
+ *   2. Atualiza o Lead: funnelStage='CONVERTIDO', status='AUDITADO_APROVADO'
+ *   3. Lança comissão DIRECT_SALE no CommissionLedger para o frentista
+ *   4. SE o lead veio de um PDV com managerPromoterId:
+ *      → Lança comissão PDV_NETWORK_SALE para o Promotor-Gerente do PDV
+ *      → Incrementa PartnerStore.totalSales
  *
  * REGRAS DE NEGÓCIO:
  *   • Apenas PROMOTER, MANAGER e TEAM_LEADER podem fechar vendas
- *   • Lead deve existir e pertencer ao mesmo tenant do promotor
+ *   • Lead deve existir e pertencer ao mesmo tenant
  *   • Lead não pode estar já VENDIDO (idempotência)
  *   • Produto/Plano deve existir e estar ativo
- *   • Comissão = product.commissionPercentage % de totalAmount
+ *   • Comissão direta  = product.commissionPercentage % × totalAmount
+ *   • Comissão de rede = pdv.customNetworkCommissionPct ?? tenant.networkCommissionPct ?? 10%
  *   • subscriptionCycle obrigatório se product.type === 'HARDWARE'
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyMobileToken }         from '@/lib/mobile-auth'
 import { prisma }                    from '@/lib/prisma'
+import {
+  processSaleWithCommissionSplit,
+  CommissionServiceError,
+} from '@/lib/services/commission.service'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 const SALES_ROLES     = ['PROMOTER', 'MANAGER', 'TEAM_LEADER'] as const
@@ -70,8 +78,7 @@ export async function POST(req: NextRequest) {
     totalAmount,
     subscriptionCycle,
     subscriptionAmount = 0,
-    // promoterId pode vir no body para admins criarem em nome de alguém
-    // para promotores, sempre usa o sub do JWT
+    // MANAGER pode criar venda em nome de outro promotor
     promoterId: promoterIdFromBody,
   } = body
 
@@ -110,35 +117,17 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  /* ── 5. Busca Lead + Product em paralelo ─────────────────────────────────── */
-  const [lead, product] = await Promise.all([
-    prisma.lead.findUnique({ where: { id: leadId as string } }),
-    prisma.product.findUnique({ where: { id: productId as string } }),
-  ])
+  /* ── 5. Busca produto para validações específicas ────────────────────────── */
+  const product = await prisma.product.findUnique({
+    where: { id: productId as string },
+    select: { type: true, isActive: true },
+  })
 
-  if (!lead) {
-    return err('Lead não encontrado.', 404, 'NOT_FOUND', 'leadId')
-  }
   if (!product) {
     return err('Produto/Plano não encontrado.', 404, 'NOT_FOUND', 'productId')
   }
   if (!product.isActive) {
     return err('Este produto está inativo e não pode ser vinculado a vendas.', 400, 'PRODUCT_INACTIVE', 'productId')
-  }
-
-  // Idempotência: lead já foi vendido?
-  if (lead.funnelStage === 'CONVERTIDO') {
-    return err(
-      'Este lead já foi convertido em venda anteriormente.',
-      409, 'ALREADY_SOLD', 'leadId',
-    )
-  }
-
-  // Guard de tenant: promotor só fecha venda de leads do seu tenant
-  if (payload.role === 'PROMOTER' && payload.tenantId && lead.tenantId) {
-    if (lead.tenantId !== payload.tenantId) {
-      return err('Este lead não pertence ao seu tenant.', 403, 'FORBIDDEN', 'leadId')
-    }
   }
 
   // Validação de ciclo para HARDWARE
@@ -151,105 +140,78 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  /* ── 6. Cálculo da comissão ─────────────────────────────────────────────── */
-  // Comissão = commissionPercentage % sobre o totalAmount pago
-  const commissionAmount = parseFloat(
-    ((totalAmount * product.commissionPercentage) / 100).toFixed(2),
-  )
-
-  /* ── 7. TRANSAÇÃO ATÔMICA ────────────────────────────────────────────────── */
-  // Garante consistência: ou tudo acontece, ou nada é salvo.
-  //
-  // Operações em série dentro da transaction:
-  //   a) prisma.sale.create        → registra a venda
-  //   b) prisma.lead.update        → muda funnelStage + status
-  //   c) prisma.commissionLedger.create → lança comissão PENDING no extrato
-  //
-  let sale
-  try {
-    const [createdSale] = await prisma.$transaction([
-
-      // ── a) Criar a venda ───────────────────────────────────────────────────
-      prisma.sale.create({
-        data: {
-          leadId:            leadId as string,
-          promoterId:        resolvedPromoterId,
-          productId:         productId as string,
-          paymentMethod:     paymentMethod as string,
-          installments:      inst,
-          totalAmount,
-          subscriptionCycle: subscriptionCycle as string | undefined,
-          subscriptionAmount: Number(subscriptionAmount) || 0,
-          commissionAmount,
-          tenantId:          lead.tenantId ?? payload.tenantId ?? null,
-        },
-        include: {
-          lead:    { select: { id: true, nomeCliente: true, funnelStage: true } },
-          product: { select: { id: true, name: true, commissionPercentage: true } },
-        },
-      }),
-
-      // ── b) Atualizar o lead: marcar como CONVERTIDO/VENDIDO ────────────────
-      prisma.lead.update({
-        where: { id: leadId as string },
-        data: {
-          funnelStage: 'CONVERTIDO',
-          status:      'AUDITADO_APROVADO', // venda confirma lead aprovado
-        },
-      }),
-
-      // ── c) Lançar comissão no extrato financeiro do promotor ───────────────
-      // CommissionLedger: cada linha = 1 evento de crédito
-      // Status PENDING → aguarda liquidação mensal pelo financeiro
-      prisma.commissionLedger.create({
-        data: {
-          promotorId:  resolvedPromoterId,
-          leadId:      leadId as string,
-          eventType:   'SALE_CONVERTED',
-          amount:      commissionAmount,
-          description: `Venda de "${product.name}" — ${product.commissionPercentage}% s/ ${fmtBRL(totalAmount)}`,
-          status:      'PENDING',
-          tenantId:    lead.tenantId ?? payload.tenantId ?? null,
-        },
-      }),
-    ])
-
-    sale = createdSale
-  } catch (txError) {
-    console.error('[POST /api/mobile/sales] Prisma $transaction error:', txError)
-    return err(
-      'Erro interno ao processar a venda. Tente novamente.',
-      500, 'TRANSACTION_ERROR',
-    )
+  /* ── 6. Guard de tenant ──────────────────────────────────────────────────── */
+  if (payload.role === 'PROMOTER' && payload.tenantId) {
+    const lead = await prisma.lead.findUnique({
+      where: { id: leadId as string },
+      select: { tenantId: true },
+    })
+    if (lead?.tenantId && lead.tenantId !== payload.tenantId) {
+      return err('Este lead não pertence ao seu tenant.', 403, 'FORBIDDEN', 'leadId')
+    }
   }
 
-  /* ── 8. Resposta de sucesso ──────────────────────────────────────────────── */
-  return NextResponse.json(
-    {
-      success:          true,
-      message:          'Venda registrada com sucesso!',
-      saleId:           sale.id,
-      commissionAmount,
-      commissionPct:    product.commissionPercentage,
-      sale: {
-        id:               sale.id,
-        leadId,
-        productId,
-        productName:      (sale as typeof sale & { product: { name: string } }).product?.name,
-        paymentMethod,
-        installments:     inst,
-        totalAmount,
-        subscriptionCycle: subscriptionCycle ?? null,
-        subscriptionAmount: Number(subscriptionAmount) || 0,
-        commissionAmount,
-        createdAt:        sale.createdAt,
+  /* ── 7. Processar venda com split de comissão ────────────────────────────── */
+  try {
+    const result = await processSaleWithCommissionSplit({
+      leadId:             leadId as string,
+      productId:          productId as string,
+      promoterId:         resolvedPromoterId,
+      paymentMethod:      paymentMethod as string,
+      installments:       inst,
+      totalAmount:        totalAmount as number,
+      subscriptionCycle:  subscriptionCycle as string | undefined,
+      subscriptionAmount: Number(subscriptionAmount) || 0,
+      tenantId:           payload.tenantId ?? null,
+    })
+
+    /* ── 8. Resposta de sucesso ────────────────────────────────────────────── */
+    return NextResponse.json(
+      {
+        success:                  true,
+        message:                  'Venda registrada com sucesso!',
+        saleId:                   result.saleId,
+
+        // Comissão direta (frentista)
+        commissionAmount:         result.directCommissionAmount,
+        commissionPct:            result.directCommissionPct,
+
+        // Comissão de rede (promotor-gerente do PDV)
+        networkCommission: {
+          issued:   result.networkCommissionIssued,
+          amount:   result.networkCommissionAmount,
+          pct:      result.networkCommissionPct,
+          pdvId:    result.pdvId,
+          managerId: result.managerPromoterId,
+        },
+
+        sale: result.sale,
       },
-    },
-    { status: 201 },
-  )
+      { status: 201 },
+    )
+  } catch (error) {
+    // Erros tipados do CommissionService
+    if (error instanceof CommissionServiceError) {
+      const statusMap: Record<CommissionServiceError['code'], number> = {
+        NOT_FOUND:          404,
+        PRODUCT_INACTIVE:   400,
+        ALREADY_SOLD:       409,
+        FORBIDDEN:          403,
+        TRANSACTION_ERROR:  500,
+      }
+      return err(error.message, statusMap[error.code], error.code)
+    }
+
+    // Erro genérico
+    console.error('[POST /api/mobile/sales] Erro inesperado:', error)
+    return err('Erro interno ao processar a venda. Tente novamente.', 500, 'INTERNAL_ERROR')
+  }
 }
 
 // ─── Auxiliar ─────────────────────────────────────────────────────────────────
 function fmtBRL(v: number): string {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
+
+// suprime warning de variável não utilizada no módulo
+void fmtBRL
