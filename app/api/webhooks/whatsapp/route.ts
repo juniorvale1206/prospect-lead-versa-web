@@ -1,31 +1,49 @@
 /**
- * WhatsApp Cloud API — Webhook Controller
- * ─────────────────────────────────────────────────────────────────────────────
- * Rota: /api/webhooks/whatsapp
+ * WhatsApp Cloud API -- Webhook Controller
+ * Route: /api/webhooks/whatsapp
  *
- * GET  → Verificação de segurança da Meta (hub.verify_token + hub.challenge)
- * POST → Recebimento de eventos: mensagens recebidas + status de entrega
+ * GET  -> Meta webhook verification (hub.verify_token + hub.challenge)
+ * POST -> Incoming messages + delivery status events
  *
- * Fluxo completo:
- *  1. Meta envia POST com payload criptografado
- *  2. Extraímos número (from) + conteúdo (text.body)
- *  3. Buscamos Tenant e Conversation no Prisma
- *  4. Salvamos Message com senderType = 'USER'
- *  5. Atualizamos métricas de CampaignMessage (delivered / read)
- *  6. [TODO] Emitir via Socket.io para atualizar chat em tempo real
+ * PIPELINE WITH INTELLIGENT PDV ROUTER:
  *
- * Referência Meta: https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks
+ *  1. Extract from + text.body from Meta payload
+ *  2. extractPdvTag(text) -- Regex: /\[Ref:\s*PDV-([a-zA-Z0-9_-]+)\]/i
+ *            |
+ *    +--------+----------+
+ *  TAG FOUND           NO TAG
+ *    |                   |
+ *    v                   v
+ *  routeQrCodeLead()   Generic flow (standard AI)
+ *    |
+ *    +- Find PDV in DB
+ *    +- Upsert Lead (sourceType = QR_CODE_PDV)
+ *    +- Link promotorId (managerPromoter of PDV)
+ *    +- CommissionLedger PENDING (network commission)
+ *    +- AlertLog -> notify promotor in mobile app
+ *    +- buildPdvSystemPrompt() -> personalized AI consultant
+ *
+ *  3. Save Message in DB (senderType = USER)
+ *  4. Update/create Conversation
+ *  5. Dispatch AI response (generic or contextualized)
+ *
+ * Meta reference: https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import {
+  extractPdvTag,
+  routeQrCodeLead,
+  dispatchPdvIaGreeting,
+} from '@/lib/services/pdv-lead-router.service'
 
-// Token de verificação configurado no painel Meta > WhatsApp > Webhook
+// Verification token configured in Meta > WhatsApp > Webhook panel
 const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN ?? 'prospeclead_wh_token_2025'
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET — Verificação do Webhook pela Meta
-// ─────────────────────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// GET -- Meta webhook verification
+// ---------------------------------------------------------------------------
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
 
@@ -34,17 +52,17 @@ export async function GET(req: NextRequest) {
   const challenge = searchParams.get('hub.challenge')
 
   if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-    console.log('[WA Webhook] Verificação aceita pela Meta ✅')
+    console.log('[WA Webhook] Verification accepted by Meta OK')
     return new Response(challenge ?? '', { status: 200 })
   }
 
-  console.warn('[WA Webhook] Verificação FALHOU — token inválido')
+  console.warn('[WA Webhook] Verification FAILED -- invalid token')
   return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST — Recebimento de mensagens e status
-// ─────────────────────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// POST -- Receive messages and status events
+// ---------------------------------------------------------------------------
 export async function POST(req: NextRequest) {
   let body: WhatsAppPayload
 
@@ -54,18 +72,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  // Sempre responder 200 IMEDIATAMENTE para a Meta (evitar reenvios)
-  // O processamento acontece de forma assíncrona
+  // Always respond 200 IMMEDIATELY to Meta (avoids retries)
+  // Processing happens asynchronously
   processWebhookAsync(body).catch(err =>
-    console.error('[WA Webhook] Erro no processamento:', err)
+    console.error('[WA Webhook] Processing error:', err)
   )
 
   return new Response('EVENT_RECEIVED', { status: 200 })
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Processamento Assíncrono
-// ─────────────────────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Async processing pipeline
+// ---------------------------------------------------------------------------
 async function processWebhookAsync(body: WhatsAppPayload) {
   if (!body?.entry?.length) return
 
@@ -74,14 +92,14 @@ async function processWebhookAsync(body: WhatsAppPayload) {
       const value = change.value
       if (!value) continue
 
-      // ── Mensagens recebidas ────────────────────────────────────────────────
+      // Incoming messages
       if (value.messages?.length) {
         for (const msg of value.messages) {
           await handleIncomingMessage(msg, value)
         }
       }
 
-      // ── Status de entrega (sent → delivered → read) ──────────────────────
+      // Delivery status updates (sent -> delivered -> read)
       if (value.statuses?.length) {
         for (const status of value.statuses) {
           await handleStatusUpdate(status)
@@ -91,60 +109,79 @@ async function processWebhookAsync(body: WhatsAppPayload) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Mensagem recebida do usuário
-// ─────────────────────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Incoming message handler -- Main pipeline with Intelligent PDV Router
+// ---------------------------------------------------------------------------
 async function handleIncomingMessage(
-  msg: WAMessage,
+  msg:   WAMessage,
   value: WAChangeValue
 ) {
-  const from    = msg.from // número E.164 sem '+'
-  const content = msg.text?.body ?? msg.type ?? '[mídia]'
+  const from    = msg.from                   // E.164 without '+'
+  const rawText = msg.text?.body ?? ''       // raw message text
   const phoneId = value.metadata?.phone_number_id
 
-  console.log(`[WA Webhook] Mensagem de ${from}: "${content.slice(0, 80)}"`)
+  // -----------------------------------------------------------------------
+  // STEP 1: Detect QR Code tracking tag
+  //
+  // Regex: /\[Ref:\s*PDV-([a-zA-Z0-9_-]+)\]/i
+  //
+  // Valid tag examples:
+  //   "Ola! [Ref: PDV-cmmgdem5e00018clnvyufpvja]"
+  //   "oi [Ref:PDV-abc123] quero saber mais"
+  //   "[REF: PDV-xyz789]"  (case-insensitive)
+  //
+  // QR Code URL format embedded in WhatsApp deeplink:
+  //   https://wa.me/55{PHONE}?text=Ola!%20[Ref%3A%20PDV-{pdvId}]
+  // -----------------------------------------------------------------------
+  const { found: hasPdvTag, pdvId, cleanText } = extractPdvTag(rawText)
 
-  // Normaliza número (remove 55 inicial se necessário para busca)
-  const telefoneNorm = from.replace(/^55/, '')
+  // Content persisted in DB is always the clean text (tag removed)
+  const content = cleanText || rawText || (msg.type ?? '[media]')
 
-  // Busca Channel pelo phone_number_id (credenciais do tenant)
-  // As credenciais ficam serializadas em JSON no campo Channel.credentials
+  const tagInfo = hasPdvTag ? ` | PDV TAG detected: ${pdvId}` : ''
+  console.log(`[WA Webhook] Message from ${from}: ${content.slice(0, 80)}${tagInfo}`)
+
+  // -----------------------------------------------------------------------
+  // STEP 2: Find Channel (tenant credentials)
+  // -----------------------------------------------------------------------
   const channel = await prisma.channel.findFirst({
     where: {
-      type: 'WHATSAPP_META',
+      type:     'WHATSAPP_META',
       isActive: true,
-      // Filtra pelo phone_number_id nas credenciais
       credentials: { contains: phoneId ?? '' },
     },
   })
 
   if (!channel) {
-    console.warn(`[WA Webhook] Nenhum canal encontrado para phone_number_id=${phoneId}`)
+    console.warn(`[WA Webhook] No channel found for phone_number_id=${phoneId}`)
     return
   }
 
-  // Busca agente padrão do tenant
+  // -----------------------------------------------------------------------
+  // STEP 3: Find active AI agent for this tenant
+  // -----------------------------------------------------------------------
   const agent = await prisma.agent.findFirst({
-    where: { tenantId: channel.tenantId, isActive: true },
+    where:   { tenantId: channel.tenantId, isActive: true },
     orderBy: { createdAt: 'asc' },
   })
 
   if (!agent) {
-    console.warn(`[WA Webhook] Nenhum agente ativo para tenantId=${channel.tenantId}`)
+    console.warn(`[WA Webhook] No active agent for tenantId=${channel.tenantId}`)
     return
   }
 
-  // Busca ou cria conversa para esse contato + canal
+  // -----------------------------------------------------------------------
+  // STEP 4: Find or create Conversation
+  // -----------------------------------------------------------------------
+  const contactName = value.contacts?.[0]?.profile?.name ?? `+${from}`
+
   let conversation = await prisma.conversation.findFirst({
     where: {
       contactId: from,
       channelId: channel.id,
-      status: { not: 'RESOLVED' },
+      status:    { not: 'RESOLVED' },
     },
   })
-
-  // Tenta obter nome do contato via profile (payload da Meta)
-  const contactName = value.contacts?.[0]?.profile?.name ?? `+${from}`
 
   if (!conversation) {
     conversation = await prisma.conversation.create({
@@ -157,74 +194,198 @@ async function handleIncomingMessage(
         status:       'BOT_HANDLING',
       },
     })
-    console.log(`[WA Webhook] Nova conversa criada: ${conversation.id}`)
+    console.log(`[WA Webhook] New conversation created: ${conversation.id}`)
   } else if (conversation.contactName === '' || conversation.contactName === `+${from}`) {
-    // Atualiza nome se ainda estava vazio
     await prisma.conversation.update({
       where: { id: conversation.id },
-      data: { contactName, updatedAt: new Date() },
+      data:  { contactName, updatedAt: new Date() },
     })
   }
 
-  // Salva mensagem no banco
+  // -----------------------------------------------------------------------
+  // STEP 5: Save user message in DB
+  // -----------------------------------------------------------------------
   const savedMessage = await prisma.message.create({
     data: {
       conversationId: conversation.id,
       senderType:     'USER',
       senderName:     contactName,
-      content,
+      content,                        // clean text (no [Ref: PDV-...] tag)
       messageType:    msg.type ?? 'text',
       mediaUrl:       extractMediaUrl(msg),
     },
   })
 
-  // Atualiza updatedAt da conversa (sobe na lista do inbox)
+  // Bump conversation to top of inbox
   await prisma.conversation.update({
     where: { id: conversation.id },
-    data: { updatedAt: new Date() },
+    data:  { updatedAt: new Date() },
   })
 
-  console.log(`[WA Webhook] Mensagem salva: ${savedMessage.id}`)
+  console.log(`[WA Webhook] Message saved: ${savedMessage.id}`)
 
-  // ── [TODO] Socket.io — Emitir evento em tempo real ──────────────────────
+  // -----------------------------------------------------------------------
+  // STEP 6: INTELLIGENT ROUTER
   //
-  // Em produção, após salvar a mensagem, emita para todos os operadores
-  // que estão com o chat aberto nessa conversa:
-  //
-  //   import { getSocketServer } from '@/lib/socket'  // instância global do Socket.io
-  //
-  //   const io = getSocketServer()
-  //   io.to(`tenant:${channel.tenantId}`).emit('new_message', {
-  //     conversationId: conversation.id,
-  //     message: savedMessage,
-  //     contactName,
-  //   })
-  //
-  // Configuração Socket.io recomendada para Next.js App Router:
-  //   → Servidor Socket.io autônomo na porta 3001 (socket-server.js)
-  //   → Ou usar Ably / Pusher / Cloudflare Durable Objects como alternativa gerenciada
-  //
-  // ────────────────────────────────────────────────────────────────────────────
+  //  if hasPdvTag  --> Branch A: QR Code PDV flow (personalized AI consultant)
+  //  else          --> Branch B: Generic flow (standard agent AI)
+  // -----------------------------------------------------------------------
 
-  // ── [TODO] Resposta automática da IA ────────────────────────────────────
+  if (hasPdvTag && pdvId) {
+    // =====================================================================
+    // BRANCH A: Lead captured via PDV QR Code
+    // =====================================================================
+    console.log(`[WA Webhook] Routing to PdvLeadRouter -- PDV ID: ${pdvId}`)
+
+    const pdvContext = await routeQrCodeLead(
+      pdvId,
+      from,
+      contactName,
+      channel.tenantId,
+      cleanText,
+    )
+
+    if (pdvContext) {
+      // -------------------------------------------------------------------
+      // AI response with personalized PDV context
+      //
+      // pdvContext.systemPrompt contains:
+      //  - Capture context (PDV name, city, store type)
+      //  - Manager promotor name
+      //  - Instructions: thank QR Code scan, collect vehicle/plate
+      //  - Tone: VIP consultant (not telemarketing)
+      //  - Rules: max 3 lines, no invented prices
+      // -------------------------------------------------------------------
+      await dispatchPdvIaGreeting(
+        conversation.id,
+        from,
+        channel.tenantId,
+        pdvContext,
+      )
+
+      console.log(
+        '[WA Webhook] QR Code lead processed:\n' +
+        '  PDV:      ' + pdvContext.pdvName + '\n' +
+        '  Lead ID:  ' + pdvContext.leadId + '\n' +
+        '  Promotor: ' + (pdvContext.promotorNome ?? '(no manager)') + '\n' +
+        '  New lead: ' + pdvContext.isNewLead
+      )
+      return   // AI greeting already sent by router -- exit handler
+    }
+
+    // If routeQrCodeLead returned null (PDV not found/inactive),
+    // fall through to generic flow below
+    console.warn(
+      `[WA Webhook] PDV "${pdvId}" not found or inactive -- using generic flow.`
+    )
+  }
+
+  // =========================================================================
+  // BRANCH B: Generic flow (no PDV tag)
   //
-  // Se conversation.status === 'BOT_HANDLING', chamar o LLM:
-  //   1. Buscar histórico de mensagens da conversa
-  //   2. Carregar base de conhecimento do agente (RAG: busca vetorial no Pinecone)
-  //   3. Chamar OpenAI / Anthropic com systemPrompt + contexto + histórico
-  //   4. Salvar resposta como Message { senderType: 'BOT' }
-  //   5. Enviar via WhatsAppApiService.sendMessage(from, iaResponse, channel.tenantId)
-  //
-  // ────────────────────────────────────────────────────────────────────────────
+  // Only runs if conversation.status === 'BOT_HANDLING':
+  //   1. Fetch recent message history (last 10 messages)
+  //   2. Build context with agent.systemPrompt (no PDV personalization)
+  //   3. Call OpenAI with history
+  //   4. Save response as Message { senderType: 'BOT' }
+  //   5. Send via WhatsApp API
+  // =========================================================================
+  if (conversation.status === 'BOT_HANDLING') {
+    await dispatchGenericIaResponse(
+      conversation.id,
+      from,
+      channel.tenantId,
+      agent,
+    ).catch(err =>
+      console.error('[WA Webhook] Error in generic AI response:', err)
+    )
+  }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Atualização de status de entrega (sent → delivered → read)
-// ─────────────────────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Generic AI response (standard flow -- no PDV context)
+// ---------------------------------------------------------------------------
+async function dispatchGenericIaResponse(
+  conversationId: string,
+  to:             string,
+  tenantId:       string,
+  agent:          { id: string; systemPrompt: string; model: string; tone: string },
+): Promise<void> {
+  const openaiKey = process.env.OPENAI_API_KEY
+  if (!openaiKey) {
+    console.warn('[WA Webhook] OPENAI_API_KEY not configured -- generic AI disabled.')
+    return
+  }
+
+  // Fetch recent history for context
+  const history = await prisma.message.findMany({
+    where:   { conversationId },
+    orderBy: { timestamp: 'desc' },
+    take:    10,
+    select:  { senderType: true, senderName: true, content: true },
+  })
+
+  const messages = [
+    { role: 'system', content: agent.systemPrompt || 'You are a professional sales consultant.' },
+    ...history.reverse().map(m => ({
+      role:    m.senderType === 'USER' ? 'user' : 'assistant',
+      content: m.content,
+    })),
+  ]
+
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${openaiKey}`,
+      },
+      body: JSON.stringify({
+        model:       agent.model || 'gpt-4o-mini',
+        messages,
+        max_tokens:  300,
+        temperature: 0.7,
+      }),
+    })
+
+    if (!res.ok) {
+      console.error(`[WA Webhook AI] OpenAI HTTP ${res.status}`)
+      return
+    }
+
+    const data = await res.json() as {
+      choices: Array<{ message: { content: string } }>
+    }
+    const reply = data.choices?.[0]?.message?.content?.trim()
+    if (!reply) return
+
+    // Save bot response in DB
+    await prisma.message.create({
+      data: {
+        conversationId,
+        senderType: 'BOT',
+        senderName: 'IA ProspecLead',
+        content:    reply,
+        messageType: 'text',
+      },
+    })
+
+    // Send via WhatsApp
+    const { sendTextMessage } = await import('@/lib/services/whatsapp.service')
+    await sendTextMessage(to, reply, tenantId)
+
+    console.log(`[WA Webhook AI] Generic response sent to ${to}`)
+  } catch (err) {
+    console.error('[WA Webhook AI] Error calling OpenAI:', err)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Delivery status update (sent -> delivered -> read)
+// ---------------------------------------------------------------------------
 async function handleStatusUpdate(status: WAStatus) {
   const { id: waMessageId, status: deliveryStatus } = status
 
-  // Atualiza CampaignMessage pelo waMessageId
   const campaignMsg = await prisma.campaignMessage.findUnique({
     where: { waMessageId },
   })
@@ -239,31 +400,30 @@ async function handleStatusUpdate(status: WAStatus) {
       },
     })
 
-    // Atualiza contadores agregados na campanha
     if (deliveryStatus === 'delivered') {
       await prisma.campaign.update({
         where: { id: campaignMsg.campaignId },
-        data: { totalDelivered: { increment: 1 } },
+        data:  { totalDelivered: { increment: 1 } },
       })
     } else if (deliveryStatus === 'read') {
       await prisma.campaign.update({
         where: { id: campaignMsg.campaignId },
-        data: { totalRead: { increment: 1 } },
+        data:  { totalRead: { increment: 1 } },
       })
     } else if (deliveryStatus === 'failed') {
       await prisma.campaign.update({
         where: { id: campaignMsg.campaignId },
-        data: { totalFailed: { increment: 1 } },
+        data:  { totalFailed: { increment: 1 } },
       })
     }
 
-    console.log(`[WA Status] ${waMessageId} → ${deliveryStatus}`)
+    console.log(`[WA Status] ${waMessageId} -> ${deliveryStatus}`)
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
 // Helpers
-// ─────────────────────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
 function extractMediaUrl(msg: WAMessage): string | undefined {
   if (msg.image?.id)    return `https://graph.facebook.com/v19.0/${msg.image.id}`
   if (msg.audio?.id)    return `https://graph.facebook.com/v19.0/${msg.audio.id}`
@@ -272,15 +432,15 @@ function extractMediaUrl(msg: WAMessage): string | undefined {
   return undefined
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tipos (baseados na estrutura oficial da Meta)
-// ─────────────────────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Types (based on Meta official webhook structure)
+// ---------------------------------------------------------------------------
 interface WhatsAppPayload {
   object: string
-  entry: WAEntry[]
+  entry:  WAEntry[]
 }
 interface WAEntry {
-  id: string
+  id:      string
   changes: WAChange[]
 }
 interface WAChange {
@@ -289,7 +449,7 @@ interface WAChange {
 }
 interface WAChangeValue {
   messaging_product: string
-  metadata?: { display_phone_number: string; phone_number_id: string }
+  metadata?:  { display_phone_number: string; phone_number_id: string }
   contacts?:  WAContact[]
   messages?:  WAMessage[]
   statuses?:  WAStatus[]
@@ -310,9 +470,9 @@ interface WAMessage {
   document?: { id: string; mime_type: string; filename?: string }
 }
 interface WAStatus {
-  id:         string
-  status:     string
-  timestamp:  string
+  id:           string
+  status:       string
+  timestamp:    string
   recipient_id: string
-  errors?:    { code: number; message: string }[]
+  errors?:      { code: number; message: string }[]
 }
