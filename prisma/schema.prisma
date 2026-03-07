@@ -172,6 +172,9 @@ model User {
   /// Modelo de comissão atribuído a este usuário (quando é PARTNER_EMPLOYEE)
   commissionModelId  String?
   commissionModel    CommissionModel? @relation(fields: [commissionModelId], references: [id])
+
+  /// Carteira financeira (Promotor / Frentista)
+  wallet             Wallet?
 }
 
 // ─────────────────────────────────────────────
@@ -1115,4 +1118,207 @@ model AlertLog {
   @@index([tenantId, resolved, createdAt(sort: Desc)])
   @@index([subjectUserId, createdAt(sort: Desc)])
   @@index([type, resolved])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MOTOR FINANCEIRO — CARTEIRA (WALLET)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// ARQUITETURA DE DUPLO-LIVRO:
+//
+//   CommissionLedger  ←→  Wallet
+//   ─────────────────────────────
+//   CommissionLedger é o livro contábil de COMISSÕES (eventos de negócio):
+//     • PENDING  → comissão registrada, aguardando aprovação/liquidação
+//     • PAID     → comissão aprovada e creditada na Wallet
+//
+//   Wallet é o saldo real disponível para saque:
+//     • availableBalance → soma dos créditos já liquidados (PAID) menos saques
+//     • pendingBalance   → soma das comissões ainda PENDING (leitura do ledger)
+//     • lockedBalance    → valor em saques solicitados ainda não processados
+//
+//   Fluxo:
+//     1. Venda fechada → CommissionLedger(PENDING) criado
+//     2. Gestor aprova → CommissionLedger → PAID → Wallet.availableBalance += amount
+//                        + WalletTransaction(CREDIT, source=COMMISSION_PAID)
+//     3. Promotor solicita saque → WithdrawalRequest(PENDING)
+//                        + Wallet.availableBalance -= amount
+//                        + Wallet.lockedBalance   += amount
+//                        + WalletTransaction(DEBIT, source=WITHDRAWAL_REQUEST)
+//     4. Financeiro processa → WithdrawalRequest → APPROVED
+//                        + Wallet.lockedBalance   -= amount
+//                        + WalletTransaction(DEBIT, source=WITHDRAWAL_PAID)
+//       (ou REJECTED)   + Wallet.lockedBalance   -= amount
+//                        + Wallet.availableBalance += amount (estorno)
+//                        + WalletTransaction(CREDIT, source=WITHDRAWAL_REVERSED)
+//
+// ANTI-RACE-CONDITION:
+//   Todos os débitos e créditos usam prisma.$transaction([]) para garantir
+//   atomicidade. O campo version (optimistic lock) previne double-spend.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Wallet {
+  id     String @id @default(cuid())
+
+  // ── Proprietário ─────────────────────────────────────────────────────────
+  /// Um usuário tem exatamente uma Wallet (PROMOTER | PARTNER_EMPLOYEE)
+  userId  String  @unique
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // ── Saldos ───────────────────────────────────────────────────────────────
+  /// Saldo disponível para saque (comissões liquidadas - saques)
+  availableBalance Float @default(0.0)
+
+  /// Saldo bloqueado em saques solicitados ainda não processados
+  lockedBalance    Float @default(0.0)
+
+  // ── Controle de concorrência (Optimistic Lock) ────────────────────────────
+  /// Versão incrementada a cada atualização de saldo — evita race condition
+  version          Int   @default(0)
+
+  // ── Multi-tenant ─────────────────────────────────────────────────────────
+  tenantId         String?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relações
+  transactions     WalletTransaction[]
+  withdrawals      WithdrawalRequest[]
+
+  @@index([userId])
+  @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WALLET TRANSACTION — Extrato da Carteira
+// ─────────────────────────────────────────────────────────────────────────────
+//
+//  Cada linha do extrato representa uma movimentação de saldo na Wallet.
+//  type  = CREDIT → saldo aumentou   (comissão liquidada, estorno de saque)
+//  type  = DEBIT  → saldo diminuiu   (saque solicitado)
+//
+//  source identifica a ORIGEM:
+//    COMMISSION_PAID        → comissão do CommissionLedger foi aprovada
+//    WITHDRAWAL_REQUEST     → débito ao solicitar saque (pending → lockedBalance)
+//    WITHDRAWAL_PAID        → saque processado e pago (lockedBalance → 0)
+//    WITHDRAWAL_REVERSED    → saque rejeitado, valor estornado para availableBalance
+//    MANUAL_CREDIT          → crédito manual pelo financeiro/admin
+//    MANUAL_DEBIT           → débito manual (ex: estorno de venda cancelada)
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+model WalletTransaction {
+  id       String @id @default(cuid())
+
+  // ── Carteira proprietária ─────────────────────────────────────────────────
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  // ── Tipo de movimentação ──────────────────────────────────────────────────
+  /// CREDIT | DEBIT
+  type     String
+
+  /// Origem da transação
+  /// COMMISSION_PAID | WITHDRAWAL_REQUEST | WITHDRAWAL_PAID |
+  /// WITHDRAWAL_REVERSED | MANUAL_CREDIT | MANUAL_DEBIT
+  source   String  @default("COMMISSION_PAID")
+
+  // ── Valores ───────────────────────────────────────────────────────────────
+  /// Valor absoluto em R$ (sempre positivo; o type indica crédito ou débito)
+  amount   Float
+
+  /// Saldo disponível APÓS esta transação (snapshot para o extrato)
+  balanceAfter Float @default(0.0)
+
+  // ── Rastreabilidade ───────────────────────────────────────────────────────
+  /// Texto legível no extrato:
+  ///   "Comissão: Venda Rastreador - Placa ABC1234"
+  ///   "Saque PIX solicitado"
+  ///   "Estorno de saque rejeitado"
+  description  String
+
+  /// Referência opcional ao CommissionLedger que gerou este crédito
+  commissionLedgerId String?
+
+  /// Referência opcional ao WithdrawalRequest vinculado
+  withdrawalRequestId String?
+
+  // ── Multi-tenant ─────────────────────────────────────────────────────────
+  tenantId   String?
+
+  createdAt  DateTime @default(now())
+
+  @@index([walletId, createdAt(sort: Desc)])
+  @@index([walletId, type])
+  @@index([source])
+  @@index([commissionLedgerId])
+  @@index([withdrawalRequestId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WITHDRAWAL REQUEST — Pedido de Saque
+// ─────────────────────────────────────────────────────────────────────────────
+//
+//  Ciclo de vida:
+//    PENDING   → aguardando análise do financeiro
+//    APPROVED  → pago via Pix pelo financeiro
+//    REJECTED  → negado; valor retorna para availableBalance
+//
+//  Ao criar (PENDING):
+//    • availableBalance -= amount
+//    • lockedBalance    += amount
+//    • WalletTransaction(DEBIT, WITHDRAWAL_REQUEST) criado
+//
+//  Ao aprovar (APPROVED):
+//    • lockedBalance -= amount
+//    • WalletTransaction(DEBIT, WITHDRAWAL_PAID) criado
+//
+//  Ao rejeitar (REJECTED):
+//    • lockedBalance    -= amount
+//    • availableBalance += amount  (estorno)
+//    • WalletTransaction(CREDIT, WITHDRAWAL_REVERSED) criado
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+model WithdrawalRequest {
+  id       String @id @default(cuid())
+
+  // ── Carteira proprietária ─────────────────────────────────────────────────
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  // ── Dados do saque ────────────────────────────────────────────────────────
+  amount   Float
+
+  /// Chave Pix informada pelo solicitante
+  pixKey   String
+
+  /// Tipo da chave: CPF | EMAIL | TELEFONE | CNPJ | ALEATORIA
+  pixKeyType String @default("CPF")
+
+  // ── Status ────────────────────────────────────────────────────────────────
+  /// PENDING | APPROVED | REJECTED | CANCELLED
+  status   String  @default("PENDING")
+
+  /// Nota do financeiro ao aprovar ou rejeitar
+  reviewNote String?
+
+  /// Quem aprovou/rejeitou (userId do operador financeiro)
+  reviewedById String?
+
+  // ── Timestamps ────────────────────────────────────────────────────────────
+  requestedAt  DateTime  @default(now())
+  processedAt  DateTime?
+
+  // ── Multi-tenant ─────────────────────────────────────────────────────────
+  tenantId     String?
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([walletId, status])
+  @@index([status, requestedAt(sort: Desc)])
+  @@index([tenantId, status])
 }

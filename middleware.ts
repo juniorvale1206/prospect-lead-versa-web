@@ -44,6 +44,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // ── Rotas de Admin API (autenticação via cookie + role check no handler) ──
+  if (pathname.startsWith('/api/admin/')) {
+    return NextResponse.next()
+  }
+
   // Rotas públicas - não precisa de autenticação
   const publicRoutes = ['/login', '/api/auth/login']
   if (publicRoutes.some((route) => pathname.startsWith(route))) {
