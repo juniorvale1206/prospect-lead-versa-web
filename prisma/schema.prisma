@@ -59,6 +59,9 @@ model Tenant {
   /// Taxa de comissão de rede (%) paga ao Promotor-Gerente do PDV
   /// Padrão: 10.0 (R$ 10,00 em uma venda de R$ 100,00)
   networkCommissionPct Float @default(10.0)
+
+  /// Modelos de comissionamento configurados pela franquia
+  commissionModels CommissionModel[]
 }
 
 /// Integrações por Tenant — chaves de API de serviços externos
@@ -162,6 +165,13 @@ model User {
 
   /// PDVs que este promotor gerencia (relação de rede)
   managedStores PartnerStore[] @relation("ManagerPromoter")
+
+  /// Vínculo como funcionário em PDVs (frentista, caixa, gerente local)
+  pdvEmployeeRecords PdvEmployee[]
+
+  /// Modelo de comissão atribuído a este usuário (quando é PARTNER_EMPLOYEE)
+  commissionModelId  String?
+  commissionModel    CommissionModel? @relation(fields: [commissionModelId], references: [id])
 }
 
 // ─────────────────────────────────────────────
@@ -479,6 +489,9 @@ model PartnerStore {
   /// Entradas do extrato de comissão de rede geradas por este PDV
   commissionLedgerEntries CommissionLedger[]
 
+  /// Funcionários vinculados a este PDV
+  employees PdvEmployee[]
+
   // ── Métricas ──────────────────────────────────────────────────────────────
   /// Total de leads captados (denormalized counter, atualizado via trigger)
   totalLeads  Int      @default(0)
@@ -491,6 +504,122 @@ model PartnerStore {
   @@index([tenantId, status])
   @@index([managerPromoterId])
   @@index([cnpj])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMMISSION MODEL — Tabela de Comissionamento Pré-Definida
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// CONCEITO:
+//   Cada tenant (franquia) define seus próprios planos de remuneração.
+//   Um CommissionModel é atribuído a um PdvEmployee no momento do cadastro,
+//   definindo de forma imutável como aquele colaborador será pago.
+//
+// EXEMPLOS:
+//   name: "Padrão Frentista"     → fixedValue: 50.00, percentageValue: null
+//   name: "Alta Performance"     → fixedValue: 30.00, percentageValue: 5.0
+//   name: "Comissão Pura"        → fixedValue: 0.00,  percentageValue: 8.0
+//   name: "Gerente de Loja"      → fixedValue: 100.00, percentageValue: 3.0
+//
+// CÁLCULO APLICADO NA VENDA:
+//   comissão = fixedValue + (totalAmount × percentageValue / 100)
+//
+model CommissionModel {
+  id          String  @id @default(cuid())
+
+  /// Nome descritivo do modelo (ex: "Padrão Frentista", "Alta Performance")
+  name        String
+
+  /// Valor fixo em R$ pago por venda convertida (pode ser zero)
+  fixedValue  Float   @default(0.0)
+
+  /// Percentual sobre o totalAmount da venda (opcional — null = sem percentual)
+  percentageValue Float?
+
+  /// Descrição opcional para exibição na UI do gestor
+  description String?
+
+  /// ACTIVE | INACTIVE
+  status      String  @default("ACTIVE")
+
+  // ── Multi-tenant ──────────────────────────────────────────────────────────
+  tenantId    String?
+  tenant      Tenant? @relation(fields: [tenantId], references: [id])
+
+  // ── Relações ──────────────────────────────────────────────────────────────
+  /// Funcionários vinculados a este modelo
+  employees   PdvEmployee[]
+
+  /// Usuários com este modelo como padrão (User.commissionModelId)
+  users       User[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PDV EMPLOYEE — Funcionário/Frentista Vinculado a um PDV
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// MODELO DE VÍNCULO:
+//   Um mesmo User (com role PARTNER_EMPLOYEE) pode trabalhar em N PDVs
+//   com funções e modelos de comissão diferentes em cada um.
+//   O PdvEmployee é o pivot dessa relação N:N.
+//
+// FLUXO DE CADASTRO:
+//   POST /api/mobile/pdv/employee → cria User (PARTNER_EMPLOYEE) + PdvEmployee
+//   → vincula ao CommissionModel escolhido
+//   → approvalStatus: PENDING (gestor precisa aprovar)
+//
+model PdvEmployee {
+  id        String  @id @default(cuid())
+
+  // ── Relação com o usuário do sistema ──────────────────────────────────────
+  /// Usuário com role PARTNER_EMPLOYEE associado a este vínculo
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // ── Relação com o PDV ─────────────────────────────────────────────────────
+  /// PDV onde este funcionário atua
+  pdvId     String
+  pdv       PartnerStore @relation(fields: [pdvId], references: [id], onDelete: Cascade)
+
+  // ── Modelo de comissão PRÉ-DEFINIDO no cadastro ───────────────────────────
+  /// Obrigatório — define exatamente como este colaborador será remunerado
+  commissionModelId String
+  commissionModel   CommissionModel @relation(fields: [commissionModelId], references: [id])
+
+  // ── Função no PDV ─────────────────────────────────────────────────────────
+  /// FRENTISTA | CAIXA | GERENTE_LOCAL | PROMOTOR_EXTERNO | SUPERVISOR
+  role      String  @default("FRENTISTA")
+
+  // ── Status do vínculo ─────────────────────────────────────────────────────
+  /// ACTIVE | INACTIVE | SUSPENDED
+  status    String  @default("ACTIVE")
+
+  /// Data de início no PDV
+  startedAt DateTime @default(now())
+
+  /// Data de saída (null = ainda ativo)
+  endedAt   DateTime?
+
+  /// Observações do gestor sobre este vínculo
+  notes     String?
+
+  // ── Multi-tenant ──────────────────────────────────────────────────────────
+  tenantId  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Um usuário só pode ter um vínculo ativo por PDV
+  @@unique([userId, pdvId])
+  @@index([pdvId, status])
+  @@index([userId])
+  @@index([commissionModelId])
+  @@index([tenantId])
 }
 
 // ─────────────────────────────────────────────
