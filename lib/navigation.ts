@@ -31,6 +31,7 @@ export function getNavItems(role: Role): NavItem[] {
       { label: 'Auditoria de Fotos',     href: '/financeiro/auditoria',          icon: 'audit',      section: 'Financeiro'    },
       { label: 'Comissões & KYC',        href: '/financeiro/comissoes',          icon: 'commission', section: 'Financeiro'    },
       { label: 'Revisão KYC',            href: '/admin/kyc',                     icon: 'shield',     section: 'Financeiro'    },
+      { label: 'Saques PIX',             href: '/financeiro/saques',             icon: 'wallet',     section: 'Financeiro'    },
     ]
   }
 
@@ -46,6 +47,7 @@ export function getNavItems(role: Role): NavItem[] {
       { label: 'Comissões',              href: '/financeiro/comissoes',          icon: 'commission', section: 'Financeiro'    },
       { label: 'Revisão KYC',            href: '/admin/kyc',                     icon: 'shield',     section: 'Financeiro'    },
       { label: 'Extratos',               href: '/financeiro/extratos',           icon: 'extract',    section: 'Financeiro'    },
+      { label: 'Saques PIX',             href: '/financeiro/saques',             icon: 'wallet',     section: 'Financeiro'    },
     ]
   }
 
