@@ -46,6 +46,7 @@ import { writeFile, mkdir }  from 'fs/promises'
 import path                  from 'path'
 import { prisma }            from '@/lib/prisma'
 import { verifyMobileToken, mobileError, mobileOk } from '@/lib/mobile-auth'
+import { computeSafra }      from '@/lib/services/pdv-lead-router.service'
 
 // 5 MB em bytes
 const MAX_FILE_SIZE = 5 * 1024 * 1024
@@ -219,6 +220,11 @@ export async function POST(req: NextRequest) {
 
         // Promotor responsável pelo lead (validado acima — nunca nulo)
         promotorId: resolvedPromotorId,
+
+        // ── Safra automática ─────────────────────────────────────────────────
+        // Grupos este lead no lote mensal de origem para segmentação de campanhas.
+        // Todos os leads criados neste mês recebem o mesmo cohort ("MM/YYYY").
+        cohort:    computeSafra(),
 
         // Multi-tenant (herdado do promotor)
         tenantId: payload.tenantId ?? null,

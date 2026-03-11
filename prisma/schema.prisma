@@ -318,6 +318,15 @@ model Lead {
   auditadoPor     User?     @relation("AuditadoPor", fields: [auditadoPorId], references: [id])
   auditadoEm      DateTime?
 
+  // ── Safra / Lote de Campanha ──────────────
+  /// Safra automática calculada na entrada: "MM/YYYY"  ex: "03/2026"
+  /// Agrupa leads por mês de captura para evitar fadiga em campanhas repetidas
+  cohort          String?
+  /// ID da última campanha enviada para este lead (evita spam)
+  lastCampaignId  String?
+  /// Timestamp do último disparo em massa recebido por este lead
+  lastContactedAt DateTime?
+
   // ── Promotor / captura ────────────────────
   promotorId      String?
   promotor        User?     @relation("CapturadoPor", fields: [promotorId], references: [id])

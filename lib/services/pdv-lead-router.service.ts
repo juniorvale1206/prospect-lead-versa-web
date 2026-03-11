@@ -49,6 +49,64 @@
 import { prisma } from '@/lib/prisma'
 
 // ---------------------------------------------------------------------------
+// SAFRA (Cohort) helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Computes the "safra" (crop/batch) label for a lead based on its creation date.
+ *
+ * The safra groups leads by the month/year they entered the system,
+ * allowing campaign managers to target a batch without repeating contacts.
+ *
+ * Format: "MM/YYYY"   e.g. "03/2026"
+ *
+ * @param date   Date of lead creation (defaults to now)
+ * @returns      Safra string like "03/2026"
+ *
+ * @example
+ * computeSafra()              // -> "03/2026"   (if current month is March 2026)
+ * computeSafra(new Date('2026-01-15'))  // -> "01/2026"
+ */
+export function computeSafra(date: Date = new Date()): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0')  // 01..12
+  const year  = String(date.getFullYear())                      // 2026
+  return `${month}/${year}`
+}
+
+/**
+ * Returns a human-readable label for the safra.
+ * Used in UI badges and campaign labels.
+ *
+ * @example
+ * safraLabel("03/2026")  // -> "Safra Mar/26"
+ * safraLabel("12/2025")  // -> "Safra Dez/25"
+ */
+export function safraLabel(cohort: string): string {
+  const [mm, yyyy] = cohort.split('/')
+  const monthNames = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
+  const monthName  = monthNames[parseInt(mm, 10) - 1] ?? mm
+  const shortYear  = yyyy.slice(-2)
+  return `Safra ${monthName}/${shortYear}`
+}
+
+/**
+ * Parses a safra string into a Date range (start/end of that month).
+ * Useful for date-range queries in analytics and campaign scheduling.
+ *
+ * @example
+ * safraToDates("03/2026")
+ * // -> { start: 2026-03-01T00:00:00Z, end: 2026-03-31T23:59:59Z }
+ */
+export function safraToDates(cohort: string): { start: Date; end: Date } {
+  const [mm, yyyy] = cohort.split('/')
+  const month = parseInt(mm, 10) - 1
+  const year  = parseInt(yyyy, 10)
+  const start = new Date(year, month, 1, 0, 0, 0, 0)
+  const end   = new Date(year, month + 1, 0, 23, 59, 59, 999)  // last day of month
+  return { start, end }
+}
+
+// ---------------------------------------------------------------------------
 // PDV tag extraction regex
 //
 // Tag format: [Ref: PDV-{pdvId}]
@@ -220,6 +278,13 @@ export async function routeQrCodeLead(
         sourceType:    'QR_CODE_PDV',
         pdvId:         pdv.id,
         promotorId:    pdv.managerPromoterId,   // promotor managing the PDV
+
+        // ── Safra automática ─────────────────────────────────────────────────
+        // Groups this lead into a monthly cohort for campaign targeting.
+        // Prevents duplicate mass sends to the same customer in the same period.
+        // Format: "MM/YYYY" — computed from entry date (now).
+        //
+        cohort:        computeSafra(),           // e.g. "03/2026"
 
         // Initial stage
         funnelStage:   'IA_EM_ATENDIMENTO',

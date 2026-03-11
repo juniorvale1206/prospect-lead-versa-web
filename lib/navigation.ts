@@ -34,6 +34,7 @@ export function getNavItems(role: Role): NavItem[] {
       { label: 'Saques PIX',             href: '/financeiro/saques',             icon: 'wallet',     section: 'Financeiro'    },
       // Rede PDV
       { label: 'Leads PDV',              href: '/admin/leads/pdv',               icon: 'building',   section: 'Rede PDV'      },
+      { label: 'Fila de Oportunidades',  href: '/campanhas/fila-pdv',            icon: 'kanban',     section: 'Rede PDV'      },
     ]
   }
 
@@ -51,6 +52,7 @@ export function getNavItems(role: Role): NavItem[] {
       { label: 'Extratos',               href: '/financeiro/extratos',           icon: 'extract',    section: 'Financeiro'    },
       { label: 'Saques PIX',             href: '/financeiro/saques',             icon: 'wallet',     section: 'Financeiro'    },
       { label: 'Leads PDV',              href: '/admin/leads/pdv',               icon: 'building',   section: 'Rede PDV'      },
+      { label: 'Fila de Oportunidades',  href: '/campanhas/fila-pdv',            icon: 'kanban',     section: 'Rede PDV'      },
     ]
   }
 
@@ -67,6 +69,7 @@ export function getNavItems(role: Role): NavItem[] {
       { label: 'Promotores',             href: '/admin/promotores',              icon: 'users',      section: 'Gestão'        },
       { label: 'Fila de Aprovação',      href: '/admin/promotores/aprovacoes',   icon: 'audit',      section: 'Gestão'        },
       { label: 'Leads PDV',              href: '/admin/leads/pdv',               icon: 'building',   section: 'Rede PDV'      },
+      { label: 'Fila de Oportunidades',  href: '/campanhas/fila-pdv',            icon: 'kanban',     section: 'Rede PDV'      },
     ]
   }
 
