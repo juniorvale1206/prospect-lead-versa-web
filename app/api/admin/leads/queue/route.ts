@@ -52,8 +52,8 @@ import { getSession }                from '@/lib/auth'
 import { prisma }                    from '@/lib/prisma'
 import {
   PDV_SOURCE_TYPES,
-  safraLabel,
 } from '@/lib/services/pdv-leads.service'
+import { safraLabel } from '@/lib/services/pdv-lead-router.service'
 
 export const dynamic = 'force-dynamic'
 

@@ -339,7 +339,7 @@ export default function FilaPdvClient({ session }: { session: Session }) {
 
   // Currently selected cohort(s) of selected leads
   const selectedLeads       = filteredLeads.filter(l => selectedIds.has(l.id))
-  const selectedCohorts     = [...new Set(selectedLeads.map(l => l.cohort).filter(Boolean))]
+  const selectedCohorts     = Array.from(new Set(selectedLeads.map(l => l.cohort).filter((c): c is string => Boolean(c))))
   const primaryCohort       = selectedCohorts[0] ?? null
   const primarySafraLabel   = summary.find(s => s.cohort === primaryCohort)?.label ?? primaryCohort
 
@@ -395,7 +395,7 @@ export default function FilaPdvClient({ session }: { session: Session }) {
 
     // Persist selection in sessionStorage so /campanhas/nova can read it
     const payload = {
-      leadIds:     [...selectedIds],
+      leadIds:     Array.from(selectedIds),
       cohort:      primaryCohort,
       safraLabel:  primarySafraLabel,
       count:       selectedIds.size,
@@ -783,7 +783,7 @@ export default function FilaPdvClient({ session }: { session: Session }) {
                   </p>
                   <div className="flex items-center gap-3 mt-0.5">
                     <p className="text-slate-400 text-xs">
-                      {[...new Set(selectedLeads.map(l => l.pdv?.id).filter(Boolean))].length} PDVs · {' '}
+                      {Array.from(new Set(selectedLeads.map(l => l.pdv?.id).filter((id): id is string => Boolean(id)))).length} PDVs · {' '}
                       {selectedLeads.filter(l => l.lastCampaignId === null).length} nunca contatados
                     </p>
                     <button
