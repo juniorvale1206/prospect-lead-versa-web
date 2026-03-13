@@ -1360,37 +1360,76 @@ model WithdrawalRequest {
 // PdvVisit.status valid values: SCHEDULED | IN_PROGRESS | COMPLETED | CANCELED
 
 model PdvVisit {
-  id            String         @id @default(cuid())
+  id            String   @id @default(cuid())
 
   // ── Relações ───────────────────────────────────────────────────────────────
   promotorId    String
-  promotor      User           @relation("PromotorVisits", fields: [promotorId], references: [id])
+  promotor      User         @relation("PromotorVisits", fields: [promotorId], references: [id])
 
   pdvId         String
-  pdv           PartnerStore   @relation("PdvVisits", fields: [pdvId], references: [id])
+  pdv           PartnerStore @relation("PdvVisits", fields: [pdvId], references: [id])
 
   // ── Agendamento ────────────────────────────────────────────────────────────
   scheduledDate DateTime
 
+  /// Nome do gerente / contato na loja informado ao agendar
+  storeManagerName String?
+
+  /// Endereço completo da visita (herdado ou customizado pelo promotor)
+  address          String?
+
   // ── Status ─────────────────────────────────────────────────────────────────
   /// SCHEDULED | IN_PROGRESS | COMPLETED | CANCELED
-  status        String         @default("SCHEDULED")
+  status        String @default("SCHEDULED")
 
-  // ── Check-in / Check-out ───────────────────────────────────────────────────
-  /// Timestamp de quando o promotor chegou ao PDV
+  // ── Check-in ───────────────────────────────────────────────────────────────
+  /// Timestamp de chegada ao PDV
   checkInAt       DateTime?
 
-  /// Coordenadas ou endereço capturado no check-in (ex: "-23.5505,-46.6333")
+  /// Coordenadas GPS ou endereço capturado no momento do check-in
+  /// Formato livre: "-23.5505,-46.6333" ou "Av. Paulista, 900"
   checkInLocation String?
 
-  /// Timestamp de quando o promotor encerrou a visita
+  // ── Check-out ──────────────────────────────────────────────────────────────
+  /// Timestamp de saída do PDV
   checkOutAt      DateTime?
 
-  /// Duração total calculada em minutos (checkOutAt - checkInAt)
+  /// Duração calculada: Math.round((checkOutAt - checkInAt) / 60_000)
   durationMinutes Int?
 
-  /// Anotações opcionais registradas no check-out
+  /// Anotações livres do promotor sobre a visita
   visitNotes      String?
+
+  // ── Checklist de Trade Marketing ───────────────────────────────────────────
+  //
+  //  Preenchido pelo promotor no momento do check-out.
+  //  Documenta a execução de atividades de merchandising in-store.
+  //
+  // ── Evidências fotográficas ────────────────────────────────────────────────
+
+  /// URL da foto da fachada externa do PDV
+  /// Enviada previamente via rota de upload (/api/upload); salvo somente a URL.
+  facadePhotoUrl  String?
+
+  /// URL da foto do balcão / display / ilha de produto
+  counterPhotoUrl String?
+
+  // ── Merchandising ──────────────────────────────────────────────────────────
+
+  /// Organização de layout / vitrine / planograma realizado?
+  /// true = promotor confirmou que arrumou a exposição dos produtos
+  visualMerchandisingOk Boolean @default(false)
+
+  /// Materiais de PDV aplicados durante a visita
+  /// Texto livre: "Stoppers A4, Wobblers, Adesivo de Chão, Banner 60x90"
+  pdvExecutionMaterials String?
+
+  // ── Análise de Performance ─────────────────────────────────────────────────
+
+  /// Texto de feedback coletado com o cliente / gerente da loja
+  /// Pode conter: volume de vendas percebido, objeções, oportunidades
+  /// Ex: "Gerente relatou queda em Mar/26. Concorrente Vivo fez ação."
+  performanceAnalysis String?
 
   // ── Multi-tenant ───────────────────────────────────────────────────────────
   tenantId      String?
@@ -1402,4 +1441,5 @@ model PdvVisit {
   @@index([pdvId, scheduledDate])
   @@index([status, scheduledDate])
   @@index([tenantId, scheduledDate])
+  @@index([status, checkOutAt])
 }
