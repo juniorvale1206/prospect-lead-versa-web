@@ -138,6 +138,14 @@ export async function POST(req: NextRequest) {
       ownerPhone: body.ownerPhone as string | undefined,
       storeType:  body.storeType  as string | undefined,
 
+      // Categoria do PDV: DIAMANTE (equipe física) | DIGITAL (IA Ray, default)
+      pdvType: (body.pdvType === 'DIAMANTE' ? 'DIAMANTE' : 'DIGITAL') as 'DIAMANTE' | 'DIGITAL',
+
+      // Nome do agente de IA (só relevante para DIGITAL; default: "Ray")
+      aiAttendantName: body.aiAttendantName
+        ? String(body.aiAttendantName).trim() || 'Ray'
+        : 'Ray',
+
       // Se managerPromoterId não for informado, usa o próprio promotor logado
       managerPromoterId: (body.managerPromoterId as string | undefined)
                          ?? (session.role === 'PROMOTER' ? session.userId : undefined),
@@ -230,6 +238,8 @@ export async function GET(req: NextRequest) {
           latitude:   true,
           longitude:  true,
           storeType:  true,
+          pdvType:    true,
+          aiAttendantName: true,
           status:     true,
           totalLeads: true,
           managerPromoter: {

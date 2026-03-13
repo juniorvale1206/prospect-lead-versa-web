@@ -99,6 +99,21 @@ export interface CreatePdvDto {
   /** CNPJ formatado ou somente dígitos — validado e único por tenant */
   cnpj?: string
 
+  // ── Categoria do PDV ──────────────────────────────────────────────────────
+  /**
+   * Tipo de PDV:
+   *   DIAMANTE — Parceiro com equipe física e visitas presenciais
+   *   DIGITAL  — Display passivo de captação via QR Code + IA Ray
+   * Default: "DIGITAL"
+   */
+  pdvType?: 'DIAMANTE' | 'DIGITAL'
+
+  /**
+   * Nome do agente de IA responsável pelos leads do PDV Digital.
+   * Default: "Ray"
+   */
+  aiAttendantName?: string
+
   // ── Localização geográfica ────────────────────────────────────────────────
   /** Endereço completo: "Av. Paulista, 900 - Bela Vista, São Paulo - SP" */
   address?: string
@@ -214,6 +229,8 @@ export interface SanitizedPdvData {
   ownerName:                  string | null
   ownerPhone:                 string | null
   storeType:                  string
+  pdvType:                    string
+  aiAttendantName:            string
   managerPromoterId:          string | null
   customNetworkCommissionPct: number | null
 }
@@ -251,6 +268,15 @@ export function validateCreatePdvDto(dto: CreatePdvDto): ValidationResult {
   if (!(STORE_TYPES as readonly string[]).includes(storeType)) {
     errors.push(`storeType: valor inválido "${storeType}". Use: ${STORE_TYPES.join(' | ')}`)
   }
+
+  // ── pdvType ───────────────────────────────────────────────────────────────
+  const pdvType = (dto.pdvType ?? 'DIGITAL') as string
+  if (!['DIAMANTE', 'DIGITAL'].includes(pdvType)) {
+    errors.push(`pdvType: valor inválido "${pdvType}". Use: DIAMANTE | DIGITAL`)
+  }
+
+  // ── aiAttendantName ───────────────────────────────────────────────────────
+  const aiAttendantName = (dto.aiAttendantName?.trim() || 'Ray') as string
 
   // ── uf ────────────────────────────────────────────────────────────────────
   if (dto.uf && (typeof dto.uf !== 'string' || dto.uf.trim().length !== 2)) {
@@ -312,6 +338,8 @@ export function validateCreatePdvDto(dto: CreatePdvDto): ValidationResult {
     ownerName:                  dto.ownerName?.trim()  ?? null,
     ownerPhone:                 dto.ownerPhone?.trim() ?? null,
     storeType,
+    pdvType,
+    aiAttendantName,
     managerPromoterId:          dto.managerPromoterId ?? null,
     customNetworkCommissionPct: dto.customNetworkCommissionPct ?? null,
   }
@@ -406,6 +434,8 @@ export async function createPdv(
       ownerName:                  data.ownerName,
       ownerPhone:                 data.ownerPhone,
       storeType:                  data.storeType,
+      pdvType:                    data.pdvType,
+      aiAttendantName:            data.aiAttendantName,
       status:                     'ACTIVE',
       managerPromoterId:          data.managerPromoterId,
       customNetworkCommissionPct: data.customNetworkCommissionPct,
@@ -423,6 +453,8 @@ export async function createPdv(
       ownerName:                  true,
       ownerPhone:                 true,
       storeType:                  true,
+      pdvType:                    true,
+      aiAttendantName:            true,
       status:                     true,
       totalLeads:                 true,
       customNetworkCommissionPct: true,
@@ -523,6 +555,10 @@ export interface MapLocationPin {
   totalLeads:        number
   managerPromoterId: string | null
   storeType:         string
+  /** DIAMANTE | DIGITAL — controla ícone do pino no mapa */
+  pdvType:           string
+  /** Nome do agente IA (para PDVs DIGITAL) */
+  aiAttendantName:   string
   cidade:            string | null
   uf:                string | null
 }
@@ -610,6 +646,8 @@ export async function getMapLocations(
       totalLeads:        true,
       managerPromoterId: true,
       storeType:         true,
+      pdvType:           true,
+      aiAttendantName:   true,
       cidade:            true,
       uf:                true,
     },
@@ -629,6 +667,8 @@ export async function getMapLocations(
     totalLeads:        r.totalLeads,
     managerPromoterId: r.managerPromoterId,
     storeType:         r.storeType,
+    pdvType:           r.pdvType,
+    aiAttendantName:   r.aiAttendantName,
     cidade:            r.cidade,
     uf:                r.uf,
   }))

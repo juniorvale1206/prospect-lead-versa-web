@@ -490,9 +490,34 @@ model PartnerStore {
   ownerName   String?
   ownerPhone  String?
 
-  // ── Tipo ──────────────────────────────────────────────────────────────────
+  // ── Tipo de loja ──────────────────────────────────────────────────────────
   /// POSTO_COMBUSTIVEL | LOJA_VAREJO | OFICINA | TRANSPORTADORA | OUTROS
   storeType   String   @default("POSTO_COMBUSTIVEL")
+
+  // ── Categoria do PDV (regra de negócios) ──────────────────────────────────
+  //
+  //  DIAMANTE — PDV com equipe física e visitas presenciais de promotores.
+  //             O lead é atendido pelo promotor-gerente do PDV.
+  //             Fluxo: QR Code → Lead → Promotor gerencia → IA como suporte.
+  //
+  //  DIGITAL  — Display de captação passiva via QR Code integrado com IA Ray.
+  //             Sem visitas físicas. A IA assume o atendimento IMEDIATAMENTE.
+  //             Fluxo: QR Code → Lead → IA Ray assume → Notifica promotor.
+  //
+  // Equivale ao enum: enum PdvType { DIAMANTE, DIGITAL }
+  // (SQLite não suporta enum nativo — armazenado como String com validação em app)
+  //
+  /// DIAMANTE | DIGITAL  (default: DIGITAL para todos os QR Codes passivos)
+  pdvType     String   @default("DIGITAL")
+
+  // ── Agente de IA responsável pelos leads DIGITAIS ─────────────────────────
+  //
+  //  Nome do agente que assumirá automaticamente leads do tipo DIGITAL.
+  //  Default: "Ray" (agente padrão do sistema para captação passiva).
+  //  Pode ser customizado por tenant (ex: "Ray", "Luiza", "Max").
+  //
+  /// Nome do agente IA que atende leads deste PDV Digital (default: "Ray")
+  aiAttendantName String @default("Ray")
 
   // ── Status ────────────────────────────────────────────────────────────────
   /// ACTIVE | INACTIVE | SUSPENDED
