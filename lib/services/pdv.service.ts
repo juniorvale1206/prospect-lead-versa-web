@@ -478,3 +478,158 @@ export async function getPdvsForMap(
     orderBy: { totalLeads: 'desc' },
   })
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getMapLocations  — Radar de PDVs / Mapa de Parceiros
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Filtros aceitos pelo endpoint GET /api/mobile/pdv/map-locations
+ */
+export interface MapLocationsFilter {
+  /** Tenant do utilizador autenticado (null = ADMIN_MASTER sem filtro) */
+  tenantId?:  string | null
+  /** Filtra por tipo de loja: POSTO_COMBUSTIVEL | LOJA_VAREJO | OFICINA | ... */
+  storeType?: string
+  /** Filtra por município */
+  cidade?:    string
+  /** Filtra por estado (2 letras) */
+  uf?:        string
+  /**
+   * Se informado, retorna apenas PDVs gerenciados pelo userId especificado.
+   * Usado quando o promotor ativa "ownOnly=true" no app.
+   */
+  ownOnly?:   string
+  /** Retorna apenas PDVs com totalLeads >= minLeads */
+  minLeads?:  number
+}
+
+/**
+ * Shape exata de cada pino retornado para o mapa.
+ *
+ * Campos selecionados com cuidado para minimizar o payload:
+ *   • latitude / longitude  → pino no mapa (nunca null — filtro garante)
+ *   • totalLeads            → intensidade visual do pino (heatmap / tamanho)
+ *   • managerPromoterId     → destaque de "Meu PDV" no app
+ *   • storeType             → ícone do pino (posto, loja, oficina, etc.)
+ *   • address / cidade / uf → popup de detalhes ao clicar no pino
+ */
+export interface MapLocationPin {
+  id:                string
+  name:              string
+  address:           string | null
+  latitude:          number          // garantido não-null pelo filtro Prisma
+  longitude:         number          // garantido não-null pelo filtro Prisma
+  totalLeads:        number
+  managerPromoterId: string | null
+  storeType:         string
+  cidade:            string | null
+  uf:                string | null
+}
+
+/**
+ * Query otimizada para o Radar de PDVs.
+ *
+ * ─── O que este service faz ──────────────────────────────────────────────────
+ *
+ *  1. Filtra status = "ACTIVE"   → só PDVs operacionais no mapa
+ *  2. Filtra tenantId            → isolamento multi-tenant obrigatório
+ *  3. Filtra lat/lng NOT NULL    → sem coordenada = sem pino (Prisma nativo)
+ *  4. Filtra storeType / cidade / uf / minLeads (opcionais)
+ *  5. Filtra ownOnly             → apenas PDVs do próprio promotor
+ *  6. select MÍNIMO              → ~2-5 KB para 500 PDVs vs ~200 KB completo
+ *  7. orderBy totalLeads desc    → PDVs de maior rendimento ficam no topo
+ *                                  (app pode renderizar pinos maiores primeiro)
+ *
+ * ─── Por que NÃO usar _count ou join com leads[] ─────────────────────────────
+ *
+ *  O campo `totalLeads` é um contador denormalizado (Int, default 0) mantido
+ *  pelo sistema sempre atualizado — leitura O(1) vs _count que faz COUNT(*).
+ *  Para SQLite em produção esta diferença é significativa em tabelas grandes.
+ *
+ * @param filter – MapLocationsFilter com todos os critérios opcionais
+ * @returns      – Array de MapLocationPin ordenado por totalLeads desc
+ */
+export async function getMapLocations(
+  filter: MapLocationsFilter = {},
+): Promise<MapLocationPin[]> {
+  const {
+    tenantId,
+    storeType,
+    cidade,
+    uf,
+    ownOnly,
+    minLeads,
+  } = filter
+
+  const rows = await prisma.partnerStore.findMany({
+    where: {
+      // ── Apenas PDVs operacionais ─────────────────────────────────────────
+      status: 'ACTIVE',
+
+      // ── Isolamento multi-tenant ──────────────────────────────────────────
+      //   tenantId null → ADMIN_MASTER sem filtro (vê todos)
+      ...(tenantId ? { tenantId } : {}),
+
+      // ── FILTRO CRUCIAL: só PDVs com coordenadas GPS ─────────────────────
+      //   Prisma traduz para: WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+      latitude:  { not: null },
+      longitude: { not: null },
+
+      // ── Filtros opcionais ────────────────────────────────────────────────
+      ...(storeType ? { storeType } : {}),
+
+      // cidade: case-insensitive parcial (SQLite LIKE)
+      ...(cidade ? { cidade: { contains: cidade } } : {}),
+
+      ...(uf ? { uf: uf.toUpperCase() } : {}),
+
+      // Filtro de performance mínima: só PDVs que geraram ao menos N leads
+      ...(minLeads !== undefined && minLeads > 0
+        ? { totalLeads: { gte: minLeads } }
+        : {}),
+
+      // Filtro "Meu PDV": promotor quer ver só os seus PDVs no mapa
+      ...(ownOnly ? { managerPromoterId: ownOnly } : {}),
+    },
+
+    // ── SELECT MÍNIMO — não carrega campos desnecessários ─────────────────
+    //
+    //  ❌ NÃO inclui: leads[], sales[], employees[], commissionLedgerEntries[],
+    //                  pdvVisits[], tenant{}, cnpj, ownerName, ownerPhone,
+    //                  customNetworkCommissionPct, totalSales, createdAt, updatedAt
+    //
+    //  ✅ INCLUI apenas o que o mapa precisa para renderizar o pino e o popup
+    //
+    select: {
+      id:                true,
+      name:              true,
+      address:           true,
+      latitude:          true,
+      longitude:         true,
+      totalLeads:        true,
+      managerPromoterId: true,
+      storeType:         true,
+      cidade:            true,
+      uf:                true,
+    },
+
+    // PDVs mais produtivos primeiro (permite o app renderizar pinos maiores)
+    orderBy: { totalLeads: 'desc' },
+  })
+
+  // ── Cast seguro: garante que lat/lng são number (o filtro Prisma já garante
+  //    NOT NULL, mas TypeScript não sabe disso sem a asserção) ──────────────
+  return rows.map(r => ({
+    id:                r.id,
+    name:              r.name,
+    address:           r.address,
+    latitude:          r.latitude  as number,   // NOT NULL garantido pelo where
+    longitude:         r.longitude as number,   // NOT NULL garantido pelo where
+    totalLeads:        r.totalLeads,
+    managerPromoterId: r.managerPromoterId,
+    storeType:         r.storeType,
+    cidade:            r.cidade,
+    uf:                r.uf,
+  }))
+}
