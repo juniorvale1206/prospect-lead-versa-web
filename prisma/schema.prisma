@@ -175,6 +175,9 @@ model User {
 
   /// Carteira financeira (Promotor / Frentista)
   wallet             Wallet?
+
+  /// Visitas a PDVs agendadas para este promotor
+  pdvVisits          PdvVisit[] @relation("PromotorVisits")
 }
 
 // ─────────────────────────────────────────────
@@ -509,6 +512,9 @@ model PartnerStore {
   totalLeads  Int      @default(0)
   /// Total de vendas convertidas (denormalized counter)
   totalSales  Int      @default(0)
+
+  /// Visitas agendadas / realizadas neste PDV
+  pdvVisits   PdvVisit[] @relation("PdvVisits")
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -1330,4 +1336,70 @@ model WithdrawalRequest {
   @@index([walletId, status])
   @@index([status, requestedAt(sort: Desc)])
   @@index([tenantId, status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PDV VISIT — Agenda de Visitas do Promotor
+// ─────────────────────────────────────────────────────────────────────────────
+//
+//  Ciclo de vida:
+//    SCHEDULED   → visita agendada (criada pelo gestor ou promotor)
+//    IN_PROGRESS → promotor fez check-in no PDV
+//    COMPLETED   → promotor fez check-out; durationMinutes calculado
+//    CANCELED    → visita cancelada antes de ocorrer
+//
+//  Fluxo:
+//    1. Criar visita com status SCHEDULED + scheduledDate
+//    2. POST /:id/checkin → status=IN_PROGRESS, checkInAt=now(), checkInLocation
+//    3. POST /:id/checkout → status=COMPLETED, checkOutAt=now(),
+//       durationMinutes = diff(checkOutAt, checkInAt)
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+// NOTE: SQLite does not support enums.
+// PdvVisit.status valid values: SCHEDULED | IN_PROGRESS | COMPLETED | CANCELED
+
+model PdvVisit {
+  id            String         @id @default(cuid())
+
+  // ── Relações ───────────────────────────────────────────────────────────────
+  promotorId    String
+  promotor      User           @relation("PromotorVisits", fields: [promotorId], references: [id])
+
+  pdvId         String
+  pdv           PartnerStore   @relation("PdvVisits", fields: [pdvId], references: [id])
+
+  // ── Agendamento ────────────────────────────────────────────────────────────
+  scheduledDate DateTime
+
+  // ── Status ─────────────────────────────────────────────────────────────────
+  /// SCHEDULED | IN_PROGRESS | COMPLETED | CANCELED
+  status        String         @default("SCHEDULED")
+
+  // ── Check-in / Check-out ───────────────────────────────────────────────────
+  /// Timestamp de quando o promotor chegou ao PDV
+  checkInAt       DateTime?
+
+  /// Coordenadas ou endereço capturado no check-in (ex: "-23.5505,-46.6333")
+  checkInLocation String?
+
+  /// Timestamp de quando o promotor encerrou a visita
+  checkOutAt      DateTime?
+
+  /// Duração total calculada em minutos (checkOutAt - checkInAt)
+  durationMinutes Int?
+
+  /// Anotações opcionais registradas no check-out
+  visitNotes      String?
+
+  // ── Multi-tenant ───────────────────────────────────────────────────────────
+  tenantId      String?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([promotorId, scheduledDate])
+  @@index([pdvId, scheduledDate])
+  @@index([status, scheduledDate])
+  @@index([tenantId, scheduledDate])
 }
