@@ -462,13 +462,29 @@ model PartnerStore {
   /// Nome comercial do PDV (ex: "Posto Ipiranga Centro", "Loja X")
   name        String
 
-  /// CNPJ do estabelecimento (opcional)
+  /// CNPJ do estabelecimento (único por tenant quando informado)
   cnpj        String?
 
-  /// Endereço completo
+  // ── Localização ───────────────────────────────────────────────────────────
+  /// Endereço completo formatado
+  /// Ex: "Av. Paulista, 900 - Bela Vista, São Paulo - SP, 01310-100"
   address     String?
+
+  /// Município
   cidade      String?
+
+  /// UF (estado)
   uf          String?
+
+  /// Latitude GPS capturada no momento do cadastro pelo app do promotor
+  /// Faixa válida: -90.0 a +90.0
+  /// Ex: -23.5505 (São Paulo)
+  latitude    Float?
+
+  /// Longitude GPS capturada no momento do cadastro pelo app do promotor
+  /// Faixa válida: -180.0 a +180.0
+  /// Ex: -46.6333 (São Paulo)
+  longitude   Float?
 
   // ── Contato do responsável local ──────────────────────────────────────────
   ownerName   String?
@@ -522,6 +538,10 @@ model PartnerStore {
   @@index([tenantId, status])
   @@index([managerPromoterId])
   @@index([cnpj])
+  /// Índice geográfico: filtra PDVs com coordenadas para o Mapa ao Vivo
+  @@index([latitude, longitude])
+  /// Índice por cidade para clustering de mapa
+  @@index([tenantId, cidade])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
