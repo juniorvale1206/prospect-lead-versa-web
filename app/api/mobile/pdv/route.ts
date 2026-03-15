@@ -138,8 +138,10 @@ export async function POST(req: NextRequest) {
       ownerPhone: body.ownerPhone as string | undefined,
       storeType:  body.storeType  as string | undefined,
 
-      // Categoria do PDV: DIAMANTE (equipe física) | DIGITAL (IA Ray, default)
-      pdvType: (body.pdvType === 'DIAMANTE' ? 'DIAMANTE' : 'DIGITAL') as 'DIAMANTE' | 'DIGITAL',
+      // Categoria do PDV: PROPRIA | DIAMANTE | DIGITAL (default)
+      category: (['PROPRIA', 'DIAMANTE', 'DIGITAL'].includes(body.category as string)
+        ? body.category
+        : 'DIGITAL') as 'PROPRIA' | 'DIAMANTE' | 'DIGITAL',
 
       // Nome do agente de IA (só relevante para DIGITAL; default: "Ray")
       aiAttendantName: body.aiAttendantName
@@ -238,7 +240,7 @@ export async function GET(req: NextRequest) {
           latitude:   true,
           longitude:  true,
           storeType:  true,
-          pdvType:    true,
+          category:   true,
           aiAttendantName: true,
           status:     true,
           totalLeads: true,

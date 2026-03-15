@@ -494,29 +494,39 @@ model PartnerStore {
   /// POSTO_COMBUSTIVEL | LOJA_VAREJO | OFICINA | TRANSPORTADORA | OUTROS
   storeType   String   @default("POSTO_COMBUSTIVEL")
 
-  // ── Categoria do PDV (regra de negócios) ──────────────────────────────────
+  // ── CATEGORIA DO PDV — Tríade de Negócios ─────────────────────────────────
   //
-  //  DIAMANTE — PDV com equipe física e visitas presenciais de promotores.
-  //             O lead é atendido pelo promotor-gerente do PDV.
-  //             Fluxo: QR Code → Lead → Promotor gerencia → IA como suporte.
+  //  Equivale ao enum: enum PdvCategory { PROPRIA, DIAMANTE, DIGITAL }
+  //  (SQLite não suporta enum nativo — String com validação em app)
   //
-  //  DIGITAL  — Display de captação passiva via QR Code integrado com IA Ray.
-  //             Sem visitas físicas. A IA assume o atendimento IMEDIATAMENTE.
-  //             Fluxo: QR Code → Lead → IA Ray assume → Notifica promotor.
+  //  ┌─────────────────────────────────────────────────────────────────────┐
+  //  │  PROPRIA  — Loja própria da empresa (ex: "Rastremix Detran")        │
+  //  │             CNPJ + address obrigatórios.                            │
+  //  │             Pode gerar vendas normais + ter funcionários.           │
+  //  │             Promotores fazem visitas e auditorias internas.         │
+  //  │             managerPromoterId = responsável operacional da loja.    │
+  //  │                                                                     │
+  //  │  DIAMANTE — Parceiro físico com equipe presencial e visitas.        │
+  //  │             CNPJ + address obrigatórios.                            │
+  //  │             Lead → Promotor-gerente gerencia + IA como suporte.     │
+  //  │             Comissão de rede para o promotor em cada venda.         │
+  //  │                                                                     │
+  //  │  DIGITAL  — Display passivo de captação via QR Code + IA Ray.       │
+  //  │             CNPJ + address opcionais (display sem sede fixa).       │
+  //  │             Lead → IA Ray assume IMEDIATAMENTE o atendimento.       │
+  //  │             Notifica o promotor: "Ray assumiu um novo lead".        │
+  //  └─────────────────────────────────────────────────────────────────────┘
   //
-  // Equivale ao enum: enum PdvType { DIAMANTE, DIGITAL }
-  // (SQLite não suporta enum nativo — armazenado como String com validação em app)
-  //
-  /// DIAMANTE | DIGITAL  (default: DIGITAL para todos os QR Codes passivos)
-  pdvType     String   @default("DIGITAL")
+  /// PROPRIA | DIAMANTE | DIGITAL  (default: DIGITAL)
+  category    String   @default("DIGITAL")
 
   // ── Agente de IA responsável pelos leads DIGITAIS ─────────────────────────
   //
   //  Nome do agente que assumirá automaticamente leads do tipo DIGITAL.
-  //  Default: "Ray" (agente padrão do sistema para captação passiva).
-  //  Pode ser customizado por tenant (ex: "Ray", "Luiza", "Max").
+  //  Default: "Ray" — pode ser customizado por tenant ou por PDV.
+  //  Irrelevante para PROPRIA e DIAMANTE (onde humanos gerenciam o fluxo).
   //
-  /// Nome do agente IA que atende leads deste PDV Digital (default: "Ray")
+  /// Nome do agente IA para leads deste PDV Digital (default: "Ray")
   aiAttendantName String @default("Ray")
 
   // ── Status ────────────────────────────────────────────────────────────────
@@ -567,6 +577,8 @@ model PartnerStore {
   @@index([latitude, longitude])
   /// Índice por cidade para clustering de mapa
   @@index([tenantId, cidade])
+  /// Índice de categoria: filtra PROPRIA / DIAMANTE / DIGITAL eficientemente
+  @@index([tenantId, category])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

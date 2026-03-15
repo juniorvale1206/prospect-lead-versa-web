@@ -29,13 +29,13 @@
  *   2. extractPdvTag(text) detects tag "[Ref: PDV-<id>]" via Regex
  *   3. If found -> routeQrCodeLead() is called before generic flow
  *   4. routeQrCodeLead():
- *      a. Finds PartnerStore by pdvId (includes pdvType, aiAttendantName)
+ *      a. Finds PartnerStore by pdvId (includes category, aiAttendantName)
  *      b. Upserts Lead with sourceType = QR_CODE_PDV
  *      c. Links Lead to PDV and managerPromoter
  *      d. Increments totalLeads counter
  *      e. Creates CommissionLedger PENDING for promotor
- *      f. Creates AlertLog (message varies by pdvType)
- *      g. Builds System Prompt via buildPdvSystemPrompt(pdvType)
+ *      f. Creates AlertLog (message varies by category)
+ *      g. Builds System Prompt via buildPdvSystemPrompt(category)
  *
  * TRACKING TAG FORMAT:
  *   https://wa.me/55{PHONE}?text=Ola!%20[Ref%3A%20PDV-{pdvId}]
@@ -51,7 +51,7 @@
 import { prisma } from '@/lib/prisma'
 
 // ---------------------------------------------------------------------------
-// CONSTANTS — PdvType
+// CONSTANTS — PdvCategory
 // ---------------------------------------------------------------------------
 
 /**
@@ -61,10 +61,10 @@ import { prisma } from '@/lib/prisma'
  * Stored as String in DB with app-layer validation.
  *
  * Equivale a:
- *   enum PdvType { DIAMANTE, DIGITAL }
+ *   enum PdvCategory { DIAMANTE, DIGITAL }
  */
-export const PDV_TYPES = ['DIAMANTE', 'DIGITAL'] as const
-export type PdvType = typeof PDV_TYPES[number]
+export const PDV_CATEGORIES = ['PROPRIA', 'DIAMANTE', 'DIGITAL'] as const
+export type PdvCategory = typeof PDV_CATEGORIES[number]
 
 /** Nome padrão do agente de IA para PDVs DIGITAL sem customização */
 export const DEFAULT_AI_ATTENDANT = 'Ray'
@@ -135,7 +135,7 @@ export interface PdvRouteContext {
    * PDV type: "DIAMANTE" (equipe física) or "DIGITAL" (IA Ray passivo)
    * Determines routing behavior and System Prompt style.
    */
-  pdvType: PdvType
+  category: PdvCategory
   /**
    * Name of the AI agent handling DIGITAL leads.
    * Default: "Ray". Can be customized per PDV.
@@ -194,7 +194,7 @@ export function extractPdvTag(text: string): PdvTagExtraction {
 /**
  * Executes the full routing flow when a PDV tag is detected.
  *
- * ─── Bifurcação por pdvType ───────────────────────────────────────────────
+ * ─── Bifurcação por category ───────────────────────────────────────────────
  *
  *  DIAMANTE:
  *    • Lead criado com promotorId = managerPromoterId
@@ -223,7 +223,7 @@ export async function routeQrCodeLead(
   cleanText:   string,
 ): Promise<PdvRouteContext | null> {
 
-  // ── 2a. Find PDV (now includes pdvType + aiAttendantName) ─────────────────
+  // ── 2a. Find PDV (now includes category + aiAttendantName) ─────────────────
   const pdv = await prisma.partnerStore.findFirst({
     where: {
       id:      pdvId,
@@ -235,7 +235,7 @@ export async function routeQrCodeLead(
       name:             true,
       cidade:           true,
       storeType:        true,
-      pdvType:          true,          // ← DIAMANTE | DIGITAL
+      category:          true,          // ← DIAMANTE | DIGITAL
       aiAttendantName:  true,          // ← "Ray" ou nome customizado
       managerPromoterId: true,
       managerPromoter: {
@@ -252,12 +252,12 @@ export async function routeQrCodeLead(
     return null
   }
 
-  // ── Normaliza pdvType (garante que é DIAMANTE ou DIGITAL) ─────────────────
-  const pdvType: PdvType = (pdv.pdvType === 'DIAMANTE') ? 'DIAMANTE' : 'DIGITAL'
+  // ── Normaliza category (garante que é DIAMANTE ou DIGITAL) ─────────────────
+  const category: PdvCategory = (pdv.category === 'DIAMANTE') ? 'DIAMANTE' : 'DIGITAL'
   const aiAttendantName  = pdv.aiAttendantName || DEFAULT_AI_ATTENDANT
 
   console.log(
-    `[PdvRouter] Tag detected! PDV: "${pdv.name}" | Type: ${pdvType} | Customer: ${from}`,
+    `[PdvRouter] Tag detected! PDV: "${pdv.name}" | Type: ${category} | Customer: ${from}`,
   )
 
   // ── 2b. Normalize phone ───────────────────────────────────────────────────
@@ -304,7 +304,7 @@ export async function routeQrCodeLead(
       select: { id: true },
     })
     isNewLead = true
-    console.log(`[PdvRouter] New Lead created: ${lead.id} | PDV Type: ${pdvType}`)
+    console.log(`[PdvRouter] New Lead created: ${lead.id} | PDV Type: ${category}`)
 
     // ── 2d. Increment totalLeads counter ─────────────────────────────────────
     await prisma.partnerStore.update({
@@ -323,19 +323,19 @@ export async function routeQrCodeLead(
           eventType:      'QR_CODE_PDV_LEAD',
           amount:         0,
           description:
-            `QR Code lead captured — ${pdv.name} (${pdvType}) | ` +
+            `QR Code lead captured — ${pdv.name} (${category}) | ` +
             `${contactName} (${telefoneNorm})` +
-            (pdvType === 'DIGITAL' ? ` | Atendido por ${aiAttendantName}` : ''),
+            (category === 'DIGITAL' ? ` | Atendido por ${aiAttendantName}` : ''),
           status:   'PENDING',
           tenantId,
         },
       }).catch(e => console.warn('[PdvRouter] CommissionLedger error:', e))
 
-      // ── 2f. AlertLog — mensagem diferente por pdvType ──────────────────────
+      // ── 2f. AlertLog — mensagem diferente por category ──────────────────────
       await createPdvAlertLog({
         tenantId,
         promotorId:     pdv.managerPromoterId,
-        pdvType,
+        category,
         pdvName:        pdv.name,
         contactName,
         telefoneNorm,
@@ -346,12 +346,12 @@ export async function routeQrCodeLead(
     }
   }
 
-  // ── 2g. Build System Prompt (varia por pdvType) ───────────────────────────
+  // ── 2g. Build System Prompt (varia por category) ───────────────────────────
   const systemPrompt = buildPdvSystemPrompt({
     pdvName:        pdv.name,
     pdvCidade:      pdv.cidade,
     storeType:      pdv.storeType,
-    pdvType,
+    category,
     aiAttendantName,
     promotorNome:   pdv.managerPromoter?.nome ?? null,
     contactName,
@@ -364,7 +364,7 @@ export async function routeQrCodeLead(
     pdvName:        pdv.name,
     pdvCidade:      pdv.cidade,
     storeType:      pdv.storeType,
-    pdvType,
+    category,
     aiAttendantName,
     promotorId:     pdv.managerPromoterId,
     promotorNome:   pdv.managerPromoter?.nome ?? null,
@@ -381,7 +381,7 @@ export async function routeQrCodeLead(
 interface AlertLogParams {
   tenantId:        string
   promotorId:      string
-  pdvType:         PdvType
+  category:         PdvCategory
   pdvName:         string
   contactName:     string
   telefoneNorm:    string
@@ -391,24 +391,37 @@ interface AlertLogParams {
 }
 
 async function createPdvAlertLog(p: AlertLogParams): Promise<void> {
-  // ── Mensagens diferenciadas por tipo de PDV ────────────────────────────────
-  const title   = p.pdvType === 'DIGITAL'
-    ? `🤖 ${p.aiAttendantName} assumiu um lead do seu PDV Digital`
-    : `🎯 Novo lead captado no seu PDV Diamante`
+  // ── Mensagens e tipo diferenciados por categoria ───────────────────────────
+  const title =
+    p.category === 'DIGITAL'
+      ? `🤖 ${p.aiAttendantName} assumiu um lead do seu PDV Digital`
+      : p.category === 'PROPRIA'
+        ? `🏢 Novo lead captado na Loja Própria — Atendimento direto`
+        : `🎯 Novo lead captado no seu PDV Diamante`
 
-  const message = p.pdvType === 'DIGITAL'
-    ? `${p.contactName} escaneou o QR Code em "${p.pdvName}" e o agente ` +
-      `${p.aiAttendantName} já assumiu o atendimento automaticamente. ` +
-      `Você receberá a comissão de rede quando houver conversão.`
-    : `${p.contactName} escaneou o QR Code em "${p.pdvName}" ` +
-      `e entrou em contato via WhatsApp. A IA iniciou o atendimento ` +
-      `e o lead está vinculado à sua carteira.`
+  const message =
+    p.category === 'DIGITAL'
+      ? `${p.contactName} escaneou o QR Code em "${p.pdvName}" e o agente ` +
+        `${p.aiAttendantName} já assumiu o atendimento automaticamente. ` +
+        `Você receberá a comissão de rede quando houver conversão.`
+      : p.category === 'PROPRIA'
+        ? `${p.contactName} entrou em contato via QR Code na loja própria "${p.pdvName}". ` +
+          `Este lead foi vinculado diretamente à unidade. ` +
+          `O gerente responsável deve dar continuidade ao atendimento.`
+        : `${p.contactName} escaneou o QR Code em "${p.pdvName}" ` +
+          `e entrou em contato via WhatsApp. A IA iniciou o atendimento ` +
+          `e o lead está vinculado à sua carteira.`
+
+  const alertType =
+    p.category === 'DIGITAL' ? 'DIGITAL_PDV_LEAD_ASSIGNED' :
+    p.category === 'PROPRIA' ? 'NEW_PROPRIA_LEAD' :
+    'NEW_QR_CODE_LEAD'
 
   await prisma.alertLog.create({
     data: {
       tenantId:      p.tenantId,
       subjectUserId: p.promotorId,
-      type:          p.pdvType === 'DIGITAL' ? 'DIGITAL_PDV_LEAD_ASSIGNED' : 'NEW_QR_CODE_LEAD',
+      type:          alertType,
       title,
       message,
       severity: 'INFO',
@@ -416,8 +429,8 @@ async function createPdvAlertLog(p: AlertLogParams): Promise<void> {
         leadId:         p.leadId,
         pdvId:          p.pdvId,
         pdvName:        p.pdvName,
-        pdvType:        p.pdvType,
-        aiAttendantName: p.pdvType === 'DIGITAL' ? p.aiAttendantName : null,
+        category:        p.category,
+        aiAttendantName: p.category === 'DIGITAL' ? p.aiAttendantName : null,
         telefone:       p.telefoneNorm,
         contactName:    p.contactName,
       }),
@@ -434,7 +447,7 @@ interface PdvPromptOptions {
   pdvCidade:       string | null
   storeType:       string
   /** DIAMANTE → IA como suporte ao promotor | DIGITAL → IA Ray como agente principal */
-  pdvType:         PdvType
+  category:         PdvCategory
   /** Nome do agente de IA para PDVs DIGITAL */
   aiAttendantName: string
   promotorNome:    string | null
@@ -468,7 +481,7 @@ const STORE_TYPE_LABELS: Record<string, string> = {
  */
 export function buildPdvSystemPrompt(opts: PdvPromptOptions): string {
   const {
-    pdvName, pdvCidade, storeType, pdvType, aiAttendantName,
+    pdvName, pdvCidade, storeType, category, aiAttendantName,
     promotorNome, contactName, isNewLead, cleanText,
   } = opts
 
@@ -484,11 +497,17 @@ export function buildPdvSystemPrompt(opts: PdvPromptOptions): string {
     : `O cliente ${contactName} voltou a escanear o QR Code no ${storeLabel} ${localDesc}. ` +
       `Trate-o como um lead que já conhece a empresa.`
 
-  // ── Prompt específico por tipo de PDV ─────────────────────────────────────
-  if (pdvType === 'DIGITAL') {
+  // ── Prompt específico por tipo de PDV (Tríade: PROPRIA / DIAMANTE / DIGITAL) ─
+  if (category === 'DIGITAL') {
     return buildDigitalPrompt({ aiAttendantName, captureContext, pdvName, contactName })
   }
 
+  if (category === 'PROPRIA') {
+    // Loja própria: IA faz triagem inicial; gerente humano assume o atendimento
+    return buildPropriaPrompt({ captureContext, pdvName, promotorNome, contactName })
+  }
+
+  // DIAMANTE: IA como consultora de suporte ao promotor-gerente
   return buildDiamantePrompt({ captureContext, pdvName, promotorNome, contactName })
 }
 
@@ -538,6 +557,49 @@ me conta: qual é o seu veículo? (placa ou modelo)"
 - NUNCA invente preços sem confirmar catálogo
 - Se cliente pedir humano: informe que um especialista entrará em contato em até 2h
 - FOCO TOTAL em coletar: veículo, placa, necessidade principal`
+}
+
+// ─── Prompt PROPRIA — Loja própria: IA como triagem, gerente humano fecha ────
+
+function buildPropriaPrompt(opts: {
+  captureContext:  string
+  pdvName:         string
+  promotorNome:    string | null
+  contactName:     string
+}): string {
+  const { captureContext, pdvName, promotorNome, contactName } = opts
+
+  const gerenteRef = promotorNome
+    ? `O gerente responsável por esta unidade é ${promotorNome}.`
+    : `Esta é uma unidade própria da empresa.`
+
+  return `Você é um Assistente de Atendimento da unidade própria "${pdvName}".
+${gerenteRef}
+
+--- CONTEXTO ---
+${captureContext}
+
+--- SEU PAPEL ---
+Auxilie o atendimento inicial até que o gerente humano assuma a conversa.
+Sua missão:
+  1. Dar boas-vindas ao cliente que entrou em contato pela loja
+  2. Coletar nome do cliente e necessidade principal
+  3. Informar que um especialista entrará em contato em breve
+
+--- TOM E ESTILO ---
+- Seja cordial, profissional e objetivo
+- Máximo 3 linhas por mensagem
+- NUNCA tome decisões comerciais autonomamente nesta loja própria
+
+--- PRIMEIRA MENSAGEM ---
+"Olá, ${contactName}! Seja bem-vindo à ${pdvName}! 😊
+Um de nossos especialistas entrará em contato em breve.
+Como posso ajudar enquanto isso?"
+
+--- REGRAS CRÍTICAS ---
+- NÃO use IA para fechar vendas nesta unidade própria
+- Se o cliente perguntar preços, informe que o consultor passará uma proposta personalizada
+- O gerente humano deve assumir o atendimento o mais breve possível`
 }
 
 // ─── Prompt DIAMANTE — IA como suporte ao promotor ───────────────────────────
@@ -604,7 +666,7 @@ Para ajudar da melhor forma, me conta: qual é o seu veículo? (placa ou modelo)
  * @param conversationId   Conversation ID
  * @param to               Customer phone (E.164 without +)
  * @param tenantId         Tenant ID
- * @param context          Full PDV context (includes pdvType, aiAttendantName, systemPrompt)
+ * @param context          Full PDV context (includes category, aiAttendantName, systemPrompt)
  */
 export async function dispatchPdvIaGreeting(
   conversationId: string,
@@ -618,8 +680,16 @@ export async function dispatchPdvIaGreeting(
     return
   }
 
+  // ── PROPRIA: não aciona IA — o gerente humano atende diretamente ──────────
+  if (context.category === 'PROPRIA') {
+    console.log(
+      `[PdvRouter] PDV PROPRIA "${context.pdvName}" — IA greeting skipped, human manager handles.`,
+    )
+    return
+  }
+
   // Nome do remetente varia por tipo
-  const senderName = context.pdvType === 'DIGITAL'
+  const senderName = context.category === 'DIGITAL'
     ? context.aiAttendantName                     // "Ray" ou nome customizado
     : 'IA Consultora'
 
@@ -655,21 +725,21 @@ export async function dispatchPdvIaGreeting(
     if (result.success) {
       console.log(
         `[PdvRouter] AI greeting sent | PDV: "${context.pdvName}" | ` +
-        `Type: ${context.pdvType} | Agent: ${senderName} | wamid: ${result.waMessageId}`,
+        `Type: ${context.category} | Agent: ${senderName} | wamid: ${result.waMessageId}`,
       )
     } else {
       console.error(`[PdvRouter] Failed to send AI greeting: ${result.error}`)
     }
 
     // 4d. Update conversation with PDV context tag
-    //     Stores pdvType in buyingIntent for inbox filters
+    //     Stores category in buyingIntent for inbox filters
     await prisma.conversation.update({
       where: { id: conversationId },
       data: {
         buyingIntent:
-          `QR_CODE_PDV | type:${context.pdvType} | pdv:${context.pdvId} | ` +
+          `QR_CODE_PDV | type:${context.category} | pdv:${context.pdvId} | ` +
           `lead:${context.leadId}` +
-          (context.pdvType === 'DIGITAL' ? ` | agent:${context.aiAttendantName}` : ''),
+          (context.category === 'DIGITAL' ? ` | agent:${context.aiAttendantName}` : ''),
         updatedAt: new Date(),
       },
     }).catch(() => void 0)

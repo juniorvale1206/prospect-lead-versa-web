@@ -269,13 +269,22 @@ export function validateCreatePdvDto(dto: CreatePdvDto): ValidationResult {
     errors.push(`storeType: valor inválido "${storeType}". Use: ${STORE_TYPES.join(' | ')}`)
   }
 
-  // ── pdvType ───────────────────────────────────────────────────────────────
-  const pdvType = (dto.pdvType ?? 'DIGITAL') as string
-  if (!['DIAMANTE', 'DIGITAL'].includes(pdvType)) {
-    errors.push(`pdvType: valor inválido "${pdvType}". Use: DIAMANTE | DIGITAL`)
+  // ── category (Tríade de Negócios) ────────────────────────────────────────
+  const category = (dto.category ?? 'DIGITAL') as string
+  if (!['PROPRIA', 'DIAMANTE', 'DIGITAL'].includes(category)) {
+    errors.push(`category: valor inválido "${category}". Use: PROPRIA | DIAMANTE | DIGITAL`)
+  }
+  // PROPRIA e DIAMANTE exigem localização (unidades com endereço fixo)
+  if (category === 'PROPRIA' || category === 'DIAMANTE') {
+    if (!dto.cnpj) {
+      errors.push(`cnpj: obrigatório para PDVs da categoria ${category}`)
+    }
+    if (!dto.address && !dto.cidade) {
+      errors.push(`address ou cidade: obrigatório para PDVs da categoria ${category}`)
+    }
   }
 
-  // ── aiAttendantName ───────────────────────────────────────────────────────
+  // ── aiAttendantName ────────────────────────────────────────────────────────
   const aiAttendantName = (dto.aiAttendantName?.trim() || 'Ray') as string
 
   // ── uf ────────────────────────────────────────────────────────────────────
@@ -338,7 +347,7 @@ export function validateCreatePdvDto(dto: CreatePdvDto): ValidationResult {
     ownerName:                  dto.ownerName?.trim()  ?? null,
     ownerPhone:                 dto.ownerPhone?.trim() ?? null,
     storeType,
-    pdvType,
+    category,
     aiAttendantName,
     managerPromoterId:          dto.managerPromoterId ?? null,
     customNetworkCommissionPct: dto.customNetworkCommissionPct ?? null,
@@ -434,7 +443,7 @@ export async function createPdv(
       ownerName:                  data.ownerName,
       ownerPhone:                 data.ownerPhone,
       storeType:                  data.storeType,
-      pdvType:                    data.pdvType,
+      category:                   data.category,
       aiAttendantName:            data.aiAttendantName,
       status:                     'ACTIVE',
       managerPromoterId:          data.managerPromoterId,
@@ -453,7 +462,7 @@ export async function createPdv(
       ownerName:                  true,
       ownerPhone:                 true,
       storeType:                  true,
-      pdvType:                    true,
+      category:                   true,
       aiAttendantName:            true,
       status:                     true,
       totalLeads:                 true,
@@ -556,7 +565,8 @@ export interface MapLocationPin {
   managerPromoterId: string | null
   storeType:         string
   /** DIAMANTE | DIGITAL — controla ícone do pino no mapa */
-  pdvType:           string
+  /** PROPRIA | DIAMANTE | DIGITAL — controla ícone do pino no mapa */
+  category:          string
   /** Nome do agente IA (para PDVs DIGITAL) */
   aiAttendantName:   string
   cidade:            string | null
@@ -646,7 +656,7 @@ export async function getMapLocations(
       totalLeads:        true,
       managerPromoterId: true,
       storeType:         true,
-      pdvType:           true,
+      category:          true,
       aiAttendantName:   true,
       cidade:            true,
       uf:                true,
@@ -667,9 +677,179 @@ export async function getMapLocations(
     totalLeads:        r.totalLeads,
     managerPromoterId: r.managerPromoterId,
     storeType:         r.storeType,
-    pdvType:           r.pdvType,
+    category:          r.category,
     aiAttendantName:   r.aiAttendantName,
     cidade:            r.cidade,
     uf:                r.uf,
   }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getOptionsForAgenda  — Filtro de Agendamento (Tríade)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Shape de uma opção de local no Filtro de Agendamento.
+ *
+ * Retornado em cada uma das três listas da resposta:
+ *   unidadesProprias / parceirosDiamante / parceirosDigitais
+ */
+export interface AgendaLocationOption {
+  id:                string
+  name:              string
+  address:           string | null
+  cidade:            string | null
+  uf:                string | null
+  storeType:         string
+  category:          string           // PROPRIA | DIAMANTE | DIGITAL
+  aiAttendantName:   string           // relevante apenas para DIGITAL
+  latitude:          number | null
+  longitude:         number | null
+  totalLeads:        number
+  managerPromoterId: string | null
+}
+
+/**
+ * Resposta agrupada retornada por getOptionsForAgenda().
+ *
+ * Alimenta o "Filtro de Agendamento" no app mobile.
+ * Cada grupo é uma lista independente para o app renderizar seções separadas.
+ */
+export interface AgendaOptionsResult {
+  /** Lojas próprias da empresa (ex: "Rastremix Detran") — PROPRIA */
+  unidadesProprias:    AgendaLocationOption[]
+  /** Parceiros físicos com equipe presencial vinculados ao promotor — DIAMANTE */
+  parceirosDiamante:   AgendaLocationOption[]
+  /** Displays passivos de QR Code (para troca de adesivo, vistoria) — DIGITAL */
+  parceirosDigitais:   AgendaLocationOption[]
+  /** Totais por categoria */
+  totais: {
+    proprias:  number
+    diamante:  number
+    digital:   number
+    total:     number
+  }
+}
+
+/**
+ * Retorna todos os locais disponíveis para agendamento, agrupados pelas
+ * três categorias da Tríade de PDVs.
+ *
+ * ─── Regras de filtragem por categoria ───────────────────────────────────────
+ *
+ *  PROPRIA:
+ *    • Todas as lojas próprias ATIVAS do tenant
+ *    • Qualquer promotor pode visitar/auditar uma loja própria
+ *    • Não filtra por managerPromoterId
+ *
+ *  DIAMANTE:
+ *    • Parceiros físicos ATIVOS vinculados ao promotor
+ *    • Filtra: managerPromoterId = promotorId OU tenantId = tenant do promotor
+ *    • Se promotorId não informado (admin): retorna todos do tenant
+ *
+ *  DIGITAL:
+ *    • Displays ATIVOS do tenant (para visita de manutenção / troca de adesivo)
+ *    • Filtra: managerPromoterId = promotorId (só os seus displays)
+ *    • Se promotorId não informado (admin): retorna todos do tenant
+ *
+ * @param tenantId   – tenant do promotor logado (null = ADMIN_MASTER)
+ * @param promotorId – ID do promotor logado (null = admin vê todos)
+ */
+export async function getOptionsForAgenda(
+  tenantId:   string | null,
+  promotorId: string | null,
+): Promise<AgendaOptionsResult> {
+
+  const tenantFilter = tenantId ? { tenantId } : {}
+
+  // Select mínimo — apenas campos necessários para o app renderizar a lista
+  const selectFields = {
+    id:                true,
+    name:              true,
+    address:           true,
+    cidade:            true,
+    uf:                true,
+    storeType:         true,
+    category:          true,
+    aiAttendantName:   true,
+    latitude:          true,
+    longitude:         true,
+    totalLeads:        true,
+    managerPromoterId: true,
+  }
+
+  // ── Query paralela para as três categorias ─────────────────────────────────
+  const [proprias, diamante, digital] = await Promise.all([
+
+    // ── PROPRIA: todas as lojas próprias ativas do tenant ───────────────────
+    prisma.partnerStore.findMany({
+      where: {
+        ...tenantFilter,
+        category: 'PROPRIA',
+        status:   'ACTIVE',
+      },
+      select:  selectFields,
+      orderBy: { name: 'asc' },
+    }),
+
+    // ── DIAMANTE: parceiros físicos vinculados ao promotor ──────────────────
+    //   Admin (sem promotorId): retorna todos do tenant
+    //   Promotor: filtra pelos seus PDVs (managerPromoterId = promotorId)
+    prisma.partnerStore.findMany({
+      where: {
+        ...tenantFilter,
+        category: 'DIAMANTE',
+        status:   'ACTIVE',
+        ...(promotorId ? { managerPromoterId: promotorId } : {}),
+      },
+      select:  selectFields,
+      orderBy: [{ totalLeads: 'desc' }, { name: 'asc' }],
+    }),
+
+    // ── DIGITAL: displays passivos do promotor ──────────────────────────────
+    //   Admin: todos os digitais do tenant
+    //   Promotor: apenas os displays sob sua responsabilidade
+    prisma.partnerStore.findMany({
+      where: {
+        ...tenantFilter,
+        category: 'DIGITAL',
+        status:   'ACTIVE',
+        ...(promotorId ? { managerPromoterId: promotorId } : {}),
+      },
+      select:  selectFields,
+      orderBy: [{ totalLeads: 'desc' }, { name: 'asc' }],
+    }),
+  ])
+
+  // ── Cast: converte null para number|null nos campos Float? ─────────────────
+  const toOption = (r: typeof proprias[0]): AgendaLocationOption => ({
+    id:                r.id,
+    name:              r.name,
+    address:           r.address,
+    cidade:            r.cidade,
+    uf:                r.uf,
+    storeType:         r.storeType,
+    category:          r.category,
+    aiAttendantName:   r.aiAttendantName,
+    latitude:          r.latitude  ?? null,
+    longitude:         r.longitude ?? null,
+    totalLeads:        r.totalLeads,
+    managerPromoterId: r.managerPromoterId,
+  })
+
+  const unidadesProprias  = proprias.map(toOption)
+  const parceirosDiamante = diamante.map(toOption)
+  const parceirosDigitais = digital.map(toOption)
+
+  return {
+    unidadesProprias,
+    parceirosDiamante,
+    parceirosDigitais,
+    totais: {
+      proprias: unidadesProprias.length,
+      diamante: parceirosDiamante.length,
+      digital:  parceirosDigitais.length,
+      total:    unidadesProprias.length + parceirosDiamante.length + parceirosDigitais.length,
+    },
+  }
 }
