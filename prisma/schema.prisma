@@ -387,11 +387,112 @@ model Sale {
   /// Valor de comissão calculado no ato da venda
   commissionAmount Float   @default(0)
 
+  // ── Pedido de Pagamento vinculado (Checkout) ─────────────────────────────
+  //
+  //  Após criar a Sale, o app imediatamente cria uma PaymentOrder no gateway
+  //  (Asaas) e vincula aqui. O Flutter monitora o status via polling ou webhook.
+  //
+  paymentOrders PaymentOrder[]
+
   // ── Multi-tenant ────────────────────────────
   tenantId      String?
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  @@index([leadId])
+  @@index([promoterId])
+  @@index([tenantId, createdAt(sort: Desc)])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PAYMENT ORDER — Pedido de Pagamento (Checkout no App)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+//  Criado IMEDIATAMENTE após a Sale pelo app mobile do promotor.
+//  Representa uma cobrança gerada no gateway de pagamento (Asaas).
+//
+//  Fluxo PIX Copia e Cola:
+//    1. App cria Sale → sistema cria PaymentOrder no Asaas
+//    2. Asaas retorna pixCopiaECola + qrCodeImageUrl
+//    3. App exibe QR Code e copia-e-cola para o cliente
+//    4. Cliente paga → Asaas webhook → paymentStatus = CONFIRMED
+//
+//  Fluxo Cartão de Crédito:
+//    1. App cria Sale → sistema cria PaymentOrder no Asaas
+//    2. Asaas retorna paymentLinkUrl
+//    3. App abre WebView com o link de pagamento
+//    4. Cliente paga → Asaas webhook → paymentStatus = CONFIRMED
+//
+//  Status lifecycle:
+//    PENDING   → cobrança criada no gateway, aguardando pagamento
+//    CONFIRMED → pagamento confirmado pelo gateway
+//    OVERDUE   → venceu sem pagamento
+//    REFUNDED  → estornado
+//    CANCELLED → cancelado antes de pagar
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PaymentOrder {
+  id              String   @id @default(cuid())
+
+  // ── Vínculo com a Venda ──────────────────────────────────────────────────
+  saleId          String
+  sale            Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  // ── Gateway de Pagamento ─────────────────────────────────────────────────
+  //
+  //  Identificador retornado pelo Asaas ao criar a cobrança.
+  //  Usado para reconciliar o webhook de confirmação de pagamento.
+  //
+  /// ID da cobrança no Asaas (ex: "pay_1234567890abcdef")
+  gatewayPaymentId  String?  @unique
+
+  /// URL de acesso à cobrança no painel do Asaas (para debug/suporte)
+  gatewayPaymentUrl String?
+
+  // ── Método e Status ──────────────────────────────────────────────────────
+  /// PIX | CREDIT_CARD | BOLETO
+  paymentMethod   String   @default("PIX")
+
+  /// PENDING | CONFIRMED | OVERDUE | REFUNDED | CANCELLED
+  paymentStatus   String   @default("PENDING")
+
+  // ── Dados PIX ────────────────────────────────────────────────────────────
+  /// Código PIX Copia e Cola (ex: "00020126580014br.gov.bcb.pix...")
+  pixCopiaECola     String?
+  /// URL da imagem PNG do QR Code PIX (exibida no app para o cliente escanear)
+  pixQrCodeImageUrl String?
+  /// Chave Pix do recebedor (para exibição no app)
+  pixKey            String?
+  /// Vencimento do PIX (geralmente D+1)
+  pixExpiresAt      DateTime?
+
+  // ── Dados Cartão de Crédito ──────────────────────────────────────────────
+  /// URL do link de pagamento (app abre WebView)
+  paymentLinkUrl  String?
+  /// Número de parcelas (1 = à vista)
+  installments    Int      @default(1)
+
+  // ── Valor ────────────────────────────────────────────────────────────────
+  amount          Float
+
+  // ── Timestamps de Status ─────────────────────────────────────────────────
+  /// Quando o pagamento foi confirmado (via webhook do gateway)
+  paidAt          DateTime?
+  /// Quando venceu sem pagamento
+  overdueAt       DateTime?
+
+  // ── Multi-tenant ──────────────────────────────────────────────────────────
+  tenantId        String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([saleId])
+  @@index([gatewayPaymentId])
+  @@index([paymentStatus])
+  @@index([tenantId, paymentStatus])
 }
 
 // ─────────────────────────────────────────────
@@ -412,9 +513,14 @@ model CommissionLedger {
   saleId      String?
 
   // ── Tipo de Comissão ──────────────────────────────────────────────────────
-  /// DIRECT_SALE       → comissão padrão do frentista/promotor pela venda
-  /// PDV_NETWORK_SALE  → comissão de rede/gestão do Promotor-Gerente do PDV
-  /// IA_RESPONSE_WITH_PHOTO | IA_RESPONSE_NO_PHOTO | MANUAL_ADJUSTMENT
+  //
+  //  DIRECT_SALE       → comissão padrão do frentista/promotor pela venda direta
+  //  PDV_NETWORK_SALE  → comissão de rede do Promotor-Gerente do PDV ao converter
+  //                      NOTA: PDVs PROPRIA NÃO geram PDV_NETWORK_SALE
+  //  QR_CODE_CAPTURE   → bônus de captura ao frentista quando o QR é escaneado
+  //  MANUAL_ADJUSTMENT → ajuste manual pelo financeiro (CLOSER/FINANCIAL)
+  //
+  /// DIRECT_SALE | PDV_NETWORK_SALE | QR_CODE_CAPTURE | MANUAL_ADJUSTMENT
   commissionType String @default("DIRECT_SALE")
 
   /// PDV que originou a comissão de rede (null para comissões diretas)
@@ -440,6 +546,7 @@ model CommissionLedger {
   @@index([saleId])
   @@index([pdvId])
   @@index([commissionType, status])
+  @@index([tenantId, createdAt(sort: Desc)])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
