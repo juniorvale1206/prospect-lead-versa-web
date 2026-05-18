@@ -190,6 +190,9 @@ model User {
 
   /// Entradas de comissão (Motor 1-4 VAPEC)
   commissionEntries  CommissionEntry[] @relation("CommissionEntries")
+
+  /// Técnico vinculado a este usuário (app mobile)
+  technicianProfile  Technician?  @relation("TechnicianUser")
 }
 
 // ─────────────────────────────────────────────
@@ -694,6 +697,15 @@ model PartnerStore {
 
   /// Pedidos originados neste PDV (Módulo de Pedidos)
   orders      Order[]
+
+  /// Técnicos baseados nesta loja
+  technicians Technician[] @relation("TechnicianStore")
+
+  /// Slots de disponibilidade da loja
+  storeSlots  StoreSlot[]  @relation("StoreSlots")
+
+  /// Agendamentos de instalação nesta loja
+  appointments Appointment[] @relation("StoreAppointments")
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -1759,6 +1771,9 @@ model Order {
   // ── Eventos / Auditoria ───────────────────────────────────────────────────
   orderEvents    OrderEvent[]
 
+  // ── Agendamento de instalação ─────────────────────────────────────────────
+  appointment    Appointment?
+
   // ── Multi-tenant ──────────────────────────────────────────────────────────
   tenantId       String?
   tenant         Tenant?   @relation(fields: [tenantId], references: [id])
@@ -1985,4 +2000,164 @@ model CommissionEntry {
   @@index([orderId])
   @@index([tenantId, motor])
   @@index([tenantId, status])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MÓDULO DE AGENDA — Disponibilidade por Loja e Técnico
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─── Técnico de instalação ────────────────────────────────────────────────────
+// Representa um técnico que realiza instalações de rastreadores/câmeras.
+// Pode estar vinculado a um User (login) ou ser cadastrado apenas pelo admin.
+model Technician {
+  id          String   @id @default(cuid())
+  name        String
+  phone       String?
+  email       String?
+
+  /// Status do técnico: ACTIVE | INACTIVE | VACATION
+  status      String   @default("ACTIVE")
+
+  /// Loja base do técnico (PartnerStore ou loja própria)
+  storeId     String?
+  store       PartnerStore? @relation("TechnicianStore", fields: [storeId], references: [id])
+
+  /// Usuário vinculado (opcional — para login no app mobile)
+  userId      String?  @unique
+  user        User?    @relation("TechnicianUser", fields: [userId], references: [id])
+
+  tenantId    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  /// Slots de disponibilidade do técnico
+  slots       TechnicianSlot[]
+
+  /// Agendamentos onde este técnico é responsável
+  appointments Appointment[]
+
+  @@index([tenantId, status])
+  @@index([storeId])
+}
+
+// ─── Slot de disponibilidade do Técnico ──────────────────────────────────────
+// Define blocos de tempo em que o técnico está disponível para agendamentos.
+// Granularidade: 1 slot = 1 horário de atendimento (ex: 09:00–10:00)
+model TechnicianSlot {
+  id            String   @id @default(cuid())
+  technicianId  String
+  technician    Technician @relation(fields: [technicianId], references: [id], onDelete: Cascade)
+
+  /// Data do slot (apenas a data, sem hora)
+  date          DateTime
+
+  /// Horário de início (string "HH:mm" ex: "09:00")
+  startTime     String
+
+  /// Horário de fim (string "HH:mm" ex: "10:00")
+  endTime       String
+
+  /// AVAILABLE | BOOKED | BLOCKED | VACATION
+  status        String   @default("AVAILABLE")
+
+  /// Agendamento que ocupa este slot (quando BOOKED)
+  appointmentId String?
+
+  tenantId      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([technicianId, date])
+  @@index([date, status])
+  @@index([tenantId, date])
+}
+
+// ─── Slot de disponibilidade da Loja ─────────────────────────────────────────
+// Define os dias/horários de atendimento de cada loja (PartnerStore).
+// Ex: Segunda a Sexta 08:00–18:00
+model StoreSlot {
+  id       String   @id @default(cuid())
+  storeId  String
+  store    PartnerStore @relation("StoreSlots", fields: [storeId], references: [id], onDelete: Cascade)
+
+  /// Data do slot
+  date     DateTime
+
+  /// Horário de início "HH:mm"
+  startTime String
+
+  /// Horário de fim "HH:mm"
+  endTime   String
+
+  /// AVAILABLE | BOOKED | BLOCKED
+  status    String  @default("AVAILABLE")
+
+  /// Capacidade máxima de agendamentos simultâneos neste slot
+  capacity  Int     @default(1)
+
+  /// Quantos agendamentos já foram feitos neste slot
+  booked    Int     @default(0)
+
+  tenantId  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([storeId, date])
+  @@index([date, status])
+  @@index([tenantId, date])
+}
+
+// ─── Agendamento de Instalação ────────────────────────────────────────────────
+// Criado quando o cliente seleciona data/hora no checkout ou o admin agenda.
+// Vinculado a um Order e pode ter Loja + Técnico definidos.
+model Appointment {
+  id            String   @id @default(cuid())
+
+  // ── Vínculo com pedido ────────────────────────────────────────────────────
+  orderId       String   @unique
+  order         Order    @relation(fields: [orderId], references: [id])
+
+  // ── Loja onde será feita a instalação ────────────────────────────────────
+  storeId       String?
+  store         PartnerStore? @relation("StoreAppointments", fields: [storeId], references: [id])
+
+  // ── Técnico responsável ───────────────────────────────────────────────────
+  technicianId  String?
+  technician    Technician?  @relation(fields: [technicianId], references: [id])
+
+  // ── Data e hora agendada ──────────────────────────────────────────────────
+  scheduledDate DateTime
+  startTime     String        // "HH:mm"
+  endTime       String        // "HH:mm"
+
+  // ── Status do agendamento ─────────────────────────────────────────────────
+  /// PENDING | CONFIRMED | IN_PROGRESS | COMPLETED | CANCELLED | NO_SHOW
+  status        String   @default("PENDING")
+
+  // ── Dados do cliente para contato ─────────────────────────────────────────
+  clientName    String?
+  clientPhone   String?
+  clientEmail   String?
+
+  // ── Veículo a ser instalado ────────────────────────────────────────────────
+  plate         String?
+  vehicleModel  String?
+
+  // ── Notas ─────────────────────────────────────────────────────────────────
+  notes         String?
+  cancelReason  String?
+
+  // ── Controle de tempo ────────────────────────────────────────────────────
+  confirmedAt   DateTime?
+  completedAt   DateTime?
+  cancelledAt   DateTime?
+
+  tenantId      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([scheduledDate, status])
+  @@index([storeId, scheduledDate])
+  @@index([technicianId, scheduledDate])
 }

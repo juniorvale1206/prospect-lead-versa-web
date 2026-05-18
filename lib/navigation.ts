@@ -31,6 +31,7 @@ export function getNavItems(role: Role): NavItem[] {
       { label: 'Pedidos B2B/B2C',        href: '/admin/pedidos',                 icon: 'products',   section: 'Pagamentos'    },
       { label: 'Pagamentos & Stripe',    href: '/admin/pagamentos',              icon: 'wallet',     section: 'Pagamentos'    },
       { label: 'Nova Assinatura',        href: '/checkout',                      icon: 'commission', section: 'Pagamentos'    },
+      { label: 'Agenda & Técnicos',      href: '/admin/agenda',                  icon: 'calendar',   section: 'Pagamentos'    },
       // Financeiro
       { label: 'Comissões VAPEC',        href: '/admin/comissoes',               icon: 'commission', section: 'Financeiro'    },
       { label: 'Auditoria de Fotos',     href: '/financeiro/auditoria',          icon: 'audit',      section: 'Financeiro'    },
@@ -56,6 +57,7 @@ export function getNavItems(role: Role): NavItem[] {
       { label: 'Comissões (legacy)',      href: '/financeiro/comissoes',          icon: 'commission', section: 'Financeiro'    },
       { label: 'Pedidos B2B/B2C',        href: '/admin/pedidos',                 icon: 'products',   section: 'Pagamentos'    },
       { label: 'Pagamentos & Stripe',    href: '/admin/pagamentos',              icon: 'wallet',     section: 'Pagamentos'    },
+      { label: 'Agenda & Técnicos',      href: '/admin/agenda',                  icon: 'calendar',   section: 'Pagamentos'    },
       { label: 'Revisão KYC',            href: '/admin/kyc',                     icon: 'shield',     section: 'Financeiro'    },
       { label: 'Extratos',               href: '/financeiro/extratos',           icon: 'extract',    section: 'Financeiro'    },
       { label: 'Saques PIX',             href: '/financeiro/saques',             icon: 'wallet',     section: 'Financeiro'    },
