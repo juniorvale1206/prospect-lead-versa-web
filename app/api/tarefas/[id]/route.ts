@@ -10,22 +10,16 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
   try {
-    const tasks = await prisma.$queryRaw`
-      SELECT t.*, l.nomeCliente as leadNome, l.empresaNome as leadEmpresa, 
-             l.telefone as leadTelefone, u.nome as userName, u.email as userEmail
-      FROM Task t
-      LEFT JOIN Lead l ON t.leadId = l.id
-      LEFT JOIN User u ON t.userId = u.id
-      WHERE t.id = ${params.id}
-    ` as Record<string, unknown>[]
+    const task = await prisma.task.findUnique({
+      where: { id: params.id },
+      include: {
+        lead: { select: { nomeCliente: true, empresaNome: true, telefone: true } },
+        user: { select: { nome: true, email: true } },
+      },
+    })
 
-    if (!tasks.length) {
-      return NextResponse.json({ error: 'Tarefa não encontrada' }, { status: 404 })
-    }
+    if (!task) return NextResponse.json({ error: 'Tarefa não encontrada' }, { status: 404 })
 
-    const task = tasks[0]
-
-    // Verificar acesso: tenant ou próprio usuário
     if (
       session.role !== 'ADMIN_MASTER' &&
       task.tenantId !== session.tenantId &&
@@ -57,49 +51,34 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 
   try {
-    // Verificar que a tarefa existe e o usuário tem acesso
-    const existing = await prisma.$queryRaw`
-      SELECT id, userId, tenantId FROM Task WHERE id = ${params.id}
-    ` as Record<string, unknown>[]
+    const existing = await prisma.task.findUnique({ where: { id: params.id } })
+    if (!existing) return NextResponse.json({ error: 'Tarefa não encontrada' }, { status: 404 })
 
-    if (!existing.length) {
-      return NextResponse.json({ error: 'Tarefa não encontrada' }, { status: 404 })
-    }
-
-    const task = existing[0]
     if (
       session.role !== 'ADMIN_MASTER' &&
-      task.tenantId !== session.tenantId &&
-      task.userId !== session.userId
+      existing.tenantId !== session.tenantId &&
+      existing.userId !== session.userId
     ) {
       return NextResponse.json({ error: 'Acesso negado' }, { status: 403 })
     }
 
-    const now = new Date().toISOString()
+    const task = await prisma.task.update({
+      where: { id: params.id },
+      data: {
+        ...(title !== undefined && { title }),
+        ...(description !== undefined && { description: description || null }),
+        ...(dueDate !== undefined && { dueDate: new Date(dueDate) }),
+        ...(status !== undefined && { status }),
+        ...(leadId !== undefined && { leadId: leadId || null }),
+        ...(assignedUserId !== undefined && { userId: assignedUserId }),
+      },
+      include: {
+        lead: { select: { nomeCliente: true, empresaNome: true } },
+        user: { select: { nome: true } },
+      },
+    })
 
-    // Construir campos a atualizar dinamicamente
-    const updates: string[] = [`updatedAt = '${now}'`]
-    if (title !== undefined)        updates.push(`title = ${JSON.stringify(title)}`)
-    if (description !== undefined)  updates.push(`description = ${description ? JSON.stringify(description) : 'NULL'}`)
-    if (dueDate !== undefined)      updates.push(`dueDate = '${new Date(dueDate).toISOString()}'`)
-    if (status !== undefined)       updates.push(`status = '${status}'`)
-    if (leadId !== undefined)       updates.push(`leadId = ${leadId ? `'${leadId}'` : 'NULL'}`)
-    if (assignedUserId !== undefined) updates.push(`userId = '${assignedUserId}'`)
-
-    await prisma.$executeRawUnsafe(
-      `UPDATE Task SET ${updates.join(', ')} WHERE id = '${params.id}'`
-    )
-
-    // Retornar tarefa atualizada
-    const updated = await prisma.$queryRaw`
-      SELECT t.*, l.nomeCliente as leadNome, l.empresaNome as leadEmpresa, u.nome as userName
-      FROM Task t
-      LEFT JOIN Lead l ON t.leadId = l.id
-      LEFT JOIN User u ON t.userId = u.id
-      WHERE t.id = ${params.id}
-    ` as Record<string, unknown>[]
-
-    return NextResponse.json({ task: updated[0] })
+    return NextResponse.json({ task })
   } catch (err) {
     console.error('[PATCH /api/tarefas/[id]]', err)
     return NextResponse.json({ error: 'Erro ao atualizar tarefa' }, { status: 500 })
@@ -114,25 +93,18 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
   try {
-    const existing = await prisma.$queryRaw`
-      SELECT id, userId, tenantId FROM Task WHERE id = ${params.id}
-    ` as Record<string, unknown>[]
+    const existing = await prisma.task.findUnique({ where: { id: params.id } })
+    if (!existing) return NextResponse.json({ error: 'Tarefa não encontrada' }, { status: 404 })
 
-    if (!existing.length) {
-      return NextResponse.json({ error: 'Tarefa não encontrada' }, { status: 404 })
-    }
-
-    const task = existing[0]
     if (
       session.role !== 'ADMIN_MASTER' &&
-      task.tenantId !== session.tenantId &&
-      task.userId !== session.userId
+      existing.tenantId !== session.tenantId &&
+      existing.userId !== session.userId
     ) {
       return NextResponse.json({ error: 'Acesso negado' }, { status: 403 })
     }
 
-    await prisma.$executeRaw`DELETE FROM Task WHERE id = ${params.id}`
-
+    await prisma.task.delete({ where: { id: params.id } })
     return NextResponse.json({ success: true, message: 'Tarefa excluída com sucesso' })
   } catch (err) {
     console.error('[DELETE /api/tarefas/[id]]', err)
