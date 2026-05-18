@@ -165,6 +165,11 @@ function OrderWizard({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
     plate: '', vehicleBrand: '', vehicleModel: '', vehicleYear: '',
     vehicleType: 'CARRO', fleetSize: '', segmento: '',
   })
+  const [plateLoading, setPlateLoading] = useState(false)
+  const [plateResult, setPlateResult]   = useState<{
+    found: boolean; source: string; situacao?: string; codigoSituacao?: string;
+    cor?: string; uf?: string; municipio?: string; message?: string
+  } | null>(null)
 
   // Step 3 — plano
   const [selectedPlanId, setSelectedPlanId] = useState('gpsmy')
@@ -187,6 +192,30 @@ function OrderWizard({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
       const d = await r.json()
       if (!d.erro) setClient((prev) => ({ ...prev, logradouro: d.logradouro, bairro: d.bairro, cidade: d.localidade, uf: d.uf }))
     } catch {}
+  }
+
+  // Placa lookup (SINESP)
+  const lookupPlate = async (plate: string) => {
+    const p = plate.replace(/[^A-Z0-9]/gi, '').toUpperCase()
+    const valid = /^[A-Z]{3}[0-9]{4}$/.test(p) || /^[A-Z]{3}[0-9][A-Z][0-9]{2}$/.test(p)
+    if (!valid) return
+    setPlateLoading(true)
+    setPlateResult(null)
+    try {
+      const r = await fetch(`/api/admin/veiculo/placa/${p}`)
+      const d = await r.json()
+      setPlateResult(d)
+      if (d.found) {
+        setVehicle((v) => ({
+          ...v,
+          vehicleBrand: d.marca  ?? v.vehicleBrand,
+          vehicleModel: d.modelo ?? v.vehicleModel,
+          vehicleYear:  d.ano    ? String(d.ano) : v.vehicleYear,
+          vehicleType:  d.vehicleType ?? v.vehicleType,
+        }))
+      }
+    } catch {}
+    finally { setPlateLoading(false) }
   }
 
   const inputCls = 'w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500'
@@ -229,9 +258,23 @@ function OrderWizard({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
     e.preventDefault(); if (!orderId) return
     setLoading(true); setError('')
     try {
-      const payload = orderType === 'B2B'
-        ? { fleetSize: parseInt(vehicle.fleetSize) || 1, segmento: vehicle.segmento }
-        : { ...vehicle, vehicleYear: parseInt(vehicle.vehicleYear) || undefined }
+      // ── Sanitizar payload: não enviar strings vazias para campos Int/null ──
+      let payload: Record<string, unknown>
+      if (orderType === 'B2B') {
+        payload = {
+          fleetSize: parseInt(vehicle.fleetSize) || undefined,   // Int ou undefined
+          segmento:  vehicle.segmento || undefined,              // String ou undefined
+        }
+      } else {
+        payload = {
+          plate:        vehicle.plate       || undefined,
+          vehicleBrand: vehicle.vehicleBrand || undefined,
+          vehicleModel: vehicle.vehicleModel || undefined,
+          vehicleYear:  vehicle.vehicleYear  ? parseInt(vehicle.vehicleYear) : undefined,
+          vehicleType:  vehicle.vehicleType  || undefined,
+          // B2C não envia fleetSize nem segmento — evita FK/type error no Prisma
+        }
+      }
       const res = await fetch(`/api/admin/orders/${orderId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -453,18 +496,43 @@ function OrderWizard({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
               <h3 className="font-semibold text-gray-700 mb-1">
                 {orderType === 'B2B' ? '🚚 Dados da Frota' : '🚗 Dados do Veículo'}
               </h3>
+
               {orderType === 'B2C' ? (
                 <>
+                  {/* ── Placa + busca SINESP ─────────────────────────────── */}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className={labelCls}>Placa *</label>
-                      <input required value={vehicle.plate}
-                        onChange={(e) => setVehicle((v) => ({ ...v, plate: e.target.value.toUpperCase() }))}
-                        className={`${inputCls} font-mono tracking-wider`} placeholder="ABC1D23" maxLength={8} />
+                      <div className="relative">
+                        <input
+                          required
+                          value={vehicle.plate}
+                          onChange={(e) => {
+                            const p = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '')
+                            setVehicle((v) => ({ ...v, plate: p }))
+                            setPlateResult(null)
+                          }}
+                          onBlur={(e) => lookupPlate(e.target.value)}
+                          className={`${inputCls} font-mono tracking-widest pr-10`}
+                          placeholder="ABC1D23"
+                          maxLength={8}
+                        />
+                        {plateLoading && (
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-500 animate-spin text-base">⟳</span>
+                        )}
+                        {!plateLoading && plateResult?.found && (
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-green-500 text-base">✓</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-0.5">Consulta automática SINESP ao sair do campo</p>
                     </div>
                     <div>
                       <label className={labelCls}>Tipo de Veículo</label>
-                      <select value={vehicle.vehicleType} onChange={(e) => setVehicle((v) => ({ ...v, vehicleType: e.target.value }))} className={inputCls}>
+                      <select
+                        value={vehicle.vehicleType}
+                        onChange={(e) => setVehicle((v) => ({ ...v, vehicleType: e.target.value }))}
+                        className={inputCls}
+                      >
                         <option value="CARRO">🚗 Carro</option>
                         <option value="MOTO">🏍️ Moto</option>
                         <option value="CAMINHAO">🚛 Caminhão</option>
@@ -475,36 +543,96 @@ function OrderWizard({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
                       </select>
                     </div>
                   </div>
+
+                  {/* ── Feedback SINESP ───────────────────────────────────── */}
+                  {plateResult && (
+                    <div className={`rounded-lg px-3 py-2 text-xs flex items-start gap-2 ${
+                      plateResult.found
+                        ? plateResult.codigoSituacao === '0'
+                          ? 'bg-green-50 border border-green-200 text-green-800'
+                          : 'bg-red-50 border border-red-200 text-red-800'
+                        : 'bg-amber-50 border border-amber-200 text-amber-700'
+                    }`}>
+                      <span className="mt-0.5 text-sm flex-shrink-0">
+                        {plateResult.found
+                          ? plateResult.codigoSituacao === '0' ? '✅' : '⚠️'
+                          : '⚠️'}
+                      </span>
+                      <div>
+                        {plateResult.found ? (
+                          <>
+                            <strong>SINESP:</strong>{' '}
+                            {plateResult.situacao}
+                            {plateResult.cor && ` · Cor: ${plateResult.cor}`}
+                            {plateResult.municipio && ` · ${plateResult.municipio}/${plateResult.uf}`}
+                            <br />
+                            <span className="text-green-600 font-medium">Dados preenchidos automaticamente ↓</span>
+                          </>
+                        ) : (
+                          plateResult.message
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Marca / Modelo / Ano ──────────────────────────────── */}
                   <div className="grid grid-cols-3 gap-3">
                     <div>
                       <label className={labelCls}>Marca</label>
-                      <input value={vehicle.vehicleBrand} onChange={(e) => setVehicle((v) => ({ ...v, vehicleBrand: e.target.value }))} className={inputCls} placeholder="Toyota, Ford..." />
+                      <input
+                        value={vehicle.vehicleBrand}
+                        onChange={(e) => setVehicle((v) => ({ ...v, vehicleBrand: e.target.value }))}
+                        className={inputCls}
+                        placeholder="Toyota, Ford…"
+                      />
                     </div>
                     <div>
                       <label className={labelCls}>Modelo</label>
-                      <input value={vehicle.vehicleModel} onChange={(e) => setVehicle((v) => ({ ...v, vehicleModel: e.target.value }))} className={inputCls} placeholder="Hilux, Ranger..." />
+                      <input
+                        value={vehicle.vehicleModel}
+                        onChange={(e) => setVehicle((v) => ({ ...v, vehicleModel: e.target.value }))}
+                        className={inputCls}
+                        placeholder="Hilux, Ranger…"
+                      />
                     </div>
                     <div>
                       <label className={labelCls}>Ano</label>
-                      <input type="number" value={vehicle.vehicleYear}
+                      <input
+                        type="number"
+                        value={vehicle.vehicleYear}
                         onChange={(e) => setVehicle((v) => ({ ...v, vehicleYear: e.target.value }))}
-                        className={inputCls} min={1990} max={new Date().getFullYear() + 1} placeholder="2024" />
+                        className={inputCls}
+                        min={1990}
+                        max={new Date().getFullYear() + 1}
+                        placeholder="2024"
+                      />
                     </div>
                   </div>
                 </>
               ) : (
+                /* ── B2B: Frota ─────────────────────────────────────────── */
                 <>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className={labelCls}>Número de Veículos *</label>
-                      <input required type="number" value={vehicle.fleetSize}
+                      <input
+                        required
+                        type="number"
+                        value={vehicle.fleetSize}
                         onChange={(e) => setVehicle((v) => ({ ...v, fleetSize: e.target.value }))}
-                        className={inputCls} min={1} placeholder="Ex: 50" />
+                        className={inputCls}
+                        min={1}
+                        placeholder="Ex: 50"
+                      />
                     </div>
                     <div>
                       <label className={labelCls}>Segmento de Atuação</label>
-                      <select value={vehicle.segmento} onChange={(e) => setVehicle((v) => ({ ...v, segmento: e.target.value }))} className={inputCls}>
-                        <option value="">Selecione...</option>
+                      <select
+                        value={vehicle.segmento}
+                        onChange={(e) => setVehicle((v) => ({ ...v, segmento: e.target.value }))}
+                        className={inputCls}
+                      >
+                        <option value="">Selecione…</option>
                         <option value="MINERACAO">⛏️ Mineração</option>
                         <option value="TRANSPORTE_CARGA">🚛 Transporte de Carga</option>
                         <option value="TRANSPORTE_PASSAGEIRO">🚌 Transporte de Passageiros</option>
@@ -522,10 +650,11 @@ function OrderWizard({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
                   </div>
                 </>
               )}
+
               <div className="flex justify-between pt-2">
                 <button type="button" onClick={() => setStep(1)} className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">← Voltar</button>
-                <button type="submit" disabled={loading} className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold text-sm hover:bg-indigo-700 disabled:opacity-50">
-                  {loading ? 'Salvando...' : 'Próximo →'}
+                <button type="submit" disabled={loading || plateLoading} className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold text-sm hover:bg-indigo-700 disabled:opacity-50">
+                  {loading ? 'Salvando…' : plateLoading ? 'Consultando SINESP…' : 'Próximo →'}
                 </button>
               </div>
             </form>
