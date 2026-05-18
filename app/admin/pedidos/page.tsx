@@ -253,7 +253,8 @@ function OrderWizard({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           step: 'plan',
-          planName: selectedPlan.name,
+          planName:  selectedPlan.name,
+          baseValue: basePrice,           // ← preço base do plano VAPEC hardcoded
           planType,
           paymentMethod,
           discountValue: discountNum,

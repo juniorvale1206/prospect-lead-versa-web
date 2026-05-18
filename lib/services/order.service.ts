@@ -37,7 +37,7 @@ export interface CreateOrderDraftDto {
   leadId?: string
   tenantId: string
   tenantSlug: string
-  promoterId: string
+  promoterId?: string   // ← opcional: ADMIN_MASTER sem registro de User pode ser null
 }
 
 export interface AttachClientDto {
@@ -69,7 +69,13 @@ export interface AttachVehicleDto {
 }
 
 export interface AttachPlanDto {
-  productId: string
+  // ── Via banco de dados (fluxo original) ──
+  productId?: string
+  // ── Via valores diretos (planos VAPEC hardcoded no wizard) ──
+  planName?: string
+  baseValue?: number
+  setupFee?: number
+  // ── Campos comuns ──
   planType?: 'MONTHLY' | 'ANNUAL'
   discountValue?: number
   paymentMethod?: string
@@ -172,13 +178,13 @@ export async function createOrderDraft(dto: CreateOrderDraftDto) {
   const order = await prisma.order.create({
     data: {
       orderNumber,
-      orderType: dto.orderType ?? 'B2C',
-      status: 'DRAFT',
+      orderType:  dto.orderType  ?? 'B2C',
+      status:     'DRAFT',
       originType: dto.originType ?? 'PROMOTER',
-      pdvId: dto.pdvId ?? null,
-      leadId: dto.leadId ?? null,
-      promoterId: dto.promoterId,
-      tenantId: dto.tenantId,
+      pdvId:      dto.pdvId  ?? null,
+      leadId:     dto.leadId ?? null,
+      promoterId: dto.promoterId ?? null,
+      tenantId:   dto.tenantId,
     },
   })
 
@@ -290,38 +296,60 @@ export async function attachPlan(
 ) {
   await assertOrderStatus(tenantId, orderId, 'DRAFT')
 
-  const product = await prisma.product.findFirst({
-    where: { id: dto.productId, tenantId, isActive: true },
-  })
-  if (!product) throw new Error('Produto/Plano não encontrado ou inativo')
+  let resolvedProductId: string | null = null
+  let resolvedPlanName: string
+  let resolvedBaseValue: number
+  let resolvedSetupFee: number
 
-  const baseValue = product.price
+  if (dto.productId) {
+    // ── Caminho A: produto cadastrado no banco ────────────────────────────
+    const product = await prisma.product.findFirst({
+      where: { id: dto.productId, tenantId, isActive: true },
+    })
+    if (!product) throw new Error('Produto/Plano não encontrado ou inativo')
+
+    resolvedProductId = product.id
+    resolvedPlanName  = product.name
+    resolvedBaseValue = product.price
+    resolvedSetupFee  = product.setupFee ?? 0
+  } else if (dto.planName && dto.baseValue !== undefined) {
+    // ── Caminho B: plano VAPEC hardcoded enviado pelo wizard ──────────────
+    resolvedProductId = null
+    resolvedPlanName  = dto.planName
+    resolvedBaseValue = dto.baseValue
+    resolvedSetupFee  = dto.setupFee ?? 0
+  } else {
+    throw new Error(
+      'Informe productId (produto do banco) ou planName + baseValue (plano hardcoded)',
+    )
+  }
+
   const discountValue = dto.discountValue ?? 0
-  const setupFee = product.setupFee ?? 0
-  const netValue = Math.max(0, baseValue - discountValue)
-  const totalValue = netValue + setupFee
+  const netValue      = Math.max(0, resolvedBaseValue - discountValue)
+  const totalValue    = netValue + resolvedSetupFee
 
   const order = await prisma.order.update({
     where: { id: orderId },
     data: {
-      productId: dto.productId,
-      planType: dto.planType ?? 'MONTHLY',
-      planName: product.name,
-      baseValue,
+      productId:     resolvedProductId,
+      planType:      dto.planType ?? 'MONTHLY',
+      planName:      resolvedPlanName,
+      baseValue:     resolvedBaseValue,
       discountValue,
-      setupFee,
+      setupFee:      resolvedSetupFee,
       netValue,
       totalValue,
       paymentMethod: dto.paymentMethod ?? 'PIX',
-      installments: dto.installments ?? 1,
+      installments:  dto.installments ?? 1,
     },
   })
 
   await logEvent(orderId, 'PLAN_ATTACHED', {
-    planName: product.name,
-    baseValue,
+    planName:  resolvedPlanName,
+    baseValue: resolvedBaseValue,
     netValue,
     totalValue,
+    source: dto.productId ? 'CATALOG' : 'HARDCODED',
   }, userId)
 
   return { ...order, wizardStep: 4 }
@@ -353,7 +381,7 @@ export async function confirmOrder(
     if (order.orderType === 'B2C' && !order.plate && !order.fleetSize) {
       throw new Error('Dados do veículo incompletos para pedido B2C')
     }
-    if (!order.productId || !order.netValue) {
+    if (!order.planName || !order.netValue) {
       throw new Error('Plano não selecionado')
     }
 
