@@ -49,6 +49,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // ── Checkout e pagamentos (rota pública — acessível sem login) ─────────────
+  if (pathname.startsWith('/checkout') || pathname.startsWith('/api/pagamentos/')) {
+    return NextResponse.next()
+  }
+
   // Rotas públicas - não precisa de autenticação
   const publicRoutes = ['/login', '/api/auth/login']
   if (publicRoutes.some((route) => pathname.startsWith(route))) {

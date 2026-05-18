@@ -56,6 +56,12 @@ model Tenant {
   /// PDVs (Postos/Lojas parceiras) vinculados ao tenant
   partnerStores PartnerStore[]
 
+  /// Pedidos B2B/B2C do tenant
+  orders        Order[]
+
+  /// Sequência de numeração de pedidos por tenant (incrementado atomicamente)
+  orderSequence Int @default(0)
+
   /// Taxa de comissão de rede (%) paga ao Promotor-Gerente do PDV
   /// Padrão: 10.0 (R$ 10,00 em uma venda de R$ 100,00)
   networkCommissionPct Float @default(10.0)
@@ -178,6 +184,12 @@ model User {
 
   /// Visitas a PDVs agendadas para este promotor
   pdvVisits          PdvVisit[] @relation("PromotorVisits")
+
+  /// Pedidos realizados como promotor (Módulo de Pedidos)
+  orders             Order[]    @relation("OrderPromoter")
+
+  /// Entradas de comissão (Motor 1-4 VAPEC)
+  commissionEntries  CommissionEntry[] @relation("CommissionEntries")
 }
 
 // ─────────────────────────────────────────────
@@ -228,6 +240,9 @@ model Product {
 
   /// Vendas deste produto
   sales                Sale[]
+
+  /// Pedidos vinculados a este produto (Módulo de Pedidos)
+  orders               Order[]
 
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
@@ -336,6 +351,9 @@ model Lead {
 
   /// Vendas vinculadas a este lead
   sales           Sale[]
+
+  /// Pedidos vinculados a este lead (Módulo de Pedidos)
+  orders          Order[]
 
   /// Tarefas de follow-up vinculadas a este lead
   tasks           Task[]
@@ -673,6 +691,9 @@ model PartnerStore {
 
   /// Visitas agendadas / realizadas neste PDV
   pdvVisits   PdvVisit[] @relation("PdvVisits")
+
+  /// Pedidos originados neste PDV (Módulo de Pedidos)
+  orders      Order[]
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -1606,4 +1627,362 @@ model PdvVisit {
   @@index([status, scheduledDate])
   @@index([tenantId, scheduledDate])
   @@index([status, checkOutAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ORDER — Pedido B2B/B2C (Módulo de Pedidos VAPEC)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+//  Atende: lojas próprias (PROPRIA), franqueados, parceiros diamante (DIAMANTE),
+//  promotoras — qualquer ator que precise realizar um pedido.
+//
+//  Status lifecycle:
+//    DRAFT           → rascunho no wizard (24h TTL)
+//    PENDING         → aguardando aprovação / pagamento
+//    ACTIVE          → contrato ativo, equipamento instalado
+//    CANCELLED       → cancelado (dentro de 7 dias gera estorno de comissão)
+//    COMPLETED       → ciclo de vida encerrado
+//
+//  Numeração: {ANO}-{PREFIX}-{SEQ 5 dígitos}  ex: 2026-RTX-00847
+//  O campo orderNumber é gerado atomicamente via increment no Tenant.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Order {
+  id          String   @id @default(cuid())
+
+  // ── Numeração ─────────────────────────────────────────────────────────────
+  /// Número sequencial único do pedido: 2026-RTX-00847
+  orderNumber String   @unique
+
+  /// B2B | B2C
+  orderType   String   @default("B2C")
+
+  /// DRAFT | PENDING | ACTIVE | CANCELLED | COMPLETED
+  status      String   @default("DRAFT")
+
+  // ── Dados do Cliente ──────────────────────────────────────────────────────
+  /// Nome completo ou Razão Social
+  clientName     String?
+  /// CPF (PF) ou CNPJ (PJ)
+  clientCpfCnpj  String?
+  /// Telefone (apenas dígitos, com DDD)
+  clientPhone    String?
+  /// E-mail do cliente
+  clientEmail    String?
+  /// PF | PJ
+  clientType     String   @default("PF")
+
+  // ── Endereço de Instalação ────────────────────────────────────────────────
+  cep            String?
+  logradouro     String?
+  numero         String?
+  complemento    String?
+  bairro         String?
+  cidade         String?
+  uf             String?
+
+  // ── Veículo (B2C) ─────────────────────────────────────────────────────────
+  /// Placa (formato antigo ABC-1234 ou Mercosul ABC1D23)
+  plate          String?
+  chassi         String?
+  vehicleBrand   String?
+  vehicleModel   String?
+  vehicleYear    Int?
+  /// CARRO | MOTO | CAMINHAO | ONIBUS | MAQUINA_AGRICOLA | OUTROS
+  vehicleType    String?
+
+  // ── Frota B2B ─────────────────────────────────────────────────────────────
+  /// Número de veículos da frota (B2B)
+  fleetSize      Int?
+  /// Segmento da empresa
+  segmento       String?
+
+  // ── Plano / Produto ───────────────────────────────────────────────────────
+  productId      String?
+  product        Product?  @relation(fields: [productId], references: [id])
+
+  /// MONTHLY | ANNUAL
+  planType       String    @default("MONTHLY")
+
+  /// Nome do plano (snapshot no momento da venda)
+  planName       String?
+
+  // ── Valores (Base de Cálculo = Valor Líquido) ─────────────────────────────
+  /// Valor bruto original do plano
+  baseValue      Float     @default(0)
+  /// Desconto concedido (R$)
+  discountValue  Float     @default(0)
+  /// Taxa de setup (adesão)
+  setupFee       Float     @default(0)
+  /// Valor Líquido = baseValue - discountValue (base de cálculo das comissões)
+  netValue       Float     @default(0)
+  /// Valor total cobrado (netValue + setupFee)
+  totalValue     Float     @default(0)
+  /// Forma de pagamento: PIX | CREDIT_CARD | BOLETO | DINHEIRO
+  paymentMethod  String    @default("PIX")
+  /// Parcelas (1 = à vista)
+  installments   Int       @default(1)
+
+  // ── Origem do Pedido ──────────────────────────────────────────────────────
+  /// PROPRIA | DIAMANTE | DIGITAL | PROMOTER | ADMIN
+  originType     String    @default("PROMOTER")
+
+  /// PDV que originou o pedido (se aplicável)
+  pdvId          String?
+  pdv            PartnerStore? @relation(fields: [pdvId], references: [id])
+
+  /// Promotor responsável pelo pedido
+  promoterId     String?
+  promoter       User?     @relation("OrderPromoter", fields: [promoterId], references: [id])
+
+  /// Lead vinculado (se o pedido veio do funil)
+  leadId         String?
+  lead           Lead?     @relation(fields: [leadId], references: [id])
+
+  // ── Contrato / Ciclo ──────────────────────────────────────────────────────
+  /// Data de assinatura do contrato
+  contractSignedAt DateTime?
+  /// Data de ativação (instalação concluída)
+  activatedAt      DateTime?
+  /// Data de vencimento / cancelamento
+  cancelledAt      DateTime?
+  /// Motivo do cancelamento
+  cancelReason     String?
+
+  // ── Comissão ──────────────────────────────────────────────────────────────
+  /// Comissões já foram geradas para este pedido?
+  commissionGenerated Boolean @default(false)
+  /// Entradas de comissão vinculadas
+  commissionEntries   CommissionEntry[]
+
+  // ── Eventos / Auditoria ───────────────────────────────────────────────────
+  orderEvents    OrderEvent[]
+
+  // ── Multi-tenant ──────────────────────────────────────────────────────────
+  tenantId       String?
+  tenant         Tenant?   @relation(fields: [tenantId], references: [id])
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([tenantId, orderType])
+  @@index([promoterId])
+  @@index([pdvId])
+  @@index([leadId])
+  @@index([tenantId, createdAt(sort: Desc)])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ORDER EVENT — Auditoria de Mudanças de Status do Pedido
+// ─────────────────────────────────────────────────────────────────────────────
+//
+//  Imutável (WORM). Toda mudança de status de um pedido gera um evento aqui.
+//  Ex: DRAFT_CREATED, CUSTOMER_ATTACHED, PLAN_SELECTED, ORDER_CONFIRMED,
+//      COMMISSION_GENERATED, ORDER_CANCELLED, ACTIVATION_COMPLETED
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+model OrderEvent {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  event     String
+  /// JSON com dados do evento
+  payload   String?  @default("{}")
+  /// Usuário que triggou o evento (null = sistema)
+  userId    String?
+  createdAt DateTime @default(now())
+
+  @@index([orderId, createdAt(sort: Desc)])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMMISSION CYCLE — Ciclo de Competência VAPEC (26 a 25)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+//  Política VAPEC 2026 v1.4:
+//    • Competência: dia 26 do mês anterior até o dia 25 do mês corrente
+//    • Corte financeiro: dia 15 do mês seguinte
+//    • Janela de recuperação: dias 12-15
+//    • Pagamento: 20º dia útil do mês seguinte
+//
+//  Status lifecycle:
+//    OPEN    → ciclo aberto, acumulando transações
+//    CLOSING → em processo de fechamento (janela de recuperação)
+//    CLOSED  → fechado, aguardando pagamento
+//    PAID    → pago
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+model CommissionCycle {
+  id              String   @id @default(cuid())
+
+  /// Competência no formato "MM/YYYY" ex: "05/2026"
+  competencia     String
+
+  /// Início do ciclo: dia 26 do mês anterior
+  startDate       DateTime
+
+  /// Fim do ciclo: dia 25 do mês corrente
+  endDate         DateTime
+
+  /// Corte financeiro: dia 15 do mês seguinte
+  financialCutoff DateTime
+
+  /// Início da janela de recuperação (dia 12)
+  recoveryWindowStart DateTime?
+
+  /// Fim da janela de recuperação (dia 15)
+  recoveryWindowEnd   DateTime?
+
+  /// Data de pagamento: 20º dia útil do mês seguinte
+  paymentDate     DateTime?
+
+  /// OPEN | CLOSING | CLOSED | PAID
+  status          String   @default("OPEN")
+
+  /// Valor total de comissões no ciclo (calculado no fechamento)
+  totalAmount     Float    @default(0)
+
+  /// Número de entradas no ciclo
+  totalEntries    Int      @default(0)
+
+  /// Número de promotores envolvidos
+  totalPromoters  Int      @default(0)
+
+  /// Observações do fechamento
+  closingNotes    String?
+
+  /// Quem fechou o ciclo
+  closedById      String?
+
+  tenantId        String?
+
+  /// Entradas de comissão deste ciclo
+  entries         CommissionEntry[]
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([tenantId, competencia])
+  @@index([tenantId, status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMMISSION ENTRY — Entrada Individual de Comissão (Motor 1-4)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+//  Política VAPEC 2026 v1.4 — 4 Motores:
+//
+//  MOTOR 1 — Planos mensais (Rastremix R$200, GPS My R$250, Topy Pro R$300)
+//    • Base: 10% escalando +3% a cada 10 vendas válidas
+//    • Até 3 parcelas por contrato:
+//        - Parcela 1 (AQUISICAO): na conversão
+//        - Parcela 2 (RETENCAO1): retenção mês 1 — R$10
+//        - Parcela 3 (RETENCAO2): retenção mês 2 — R$10
+//
+//  MOTOR 2 — Ganhos diretos
+//    • 10%: planos anuais, gestão de frota, rastreadores portáteis, acessórios,
+//           serviços técnicos
+//    • 5%: franquias
+//
+//  MOTOR 3 — Carreira / Recorrência (níveis)
+//    • Bronze (300+ placas ativas)   → 3% ao mês
+//    • Prata  (600+ placas ativas)   → 4% ao mês
+//    • Ouro   (900+ placas ativas)   → 5% ao mês
+//    • Diamante (1200+ placas ativas)→ 6% ao mês
+//
+//  MOTOR 4 — Compliance
+//    • Documentação, contrato, ativação e validação financeira
+//
+//  Status lifecycle:
+//    PENDING    → gerada, aguardando validação
+//    VALIDATED  → compliance OK (documentação, contrato, ativação, financeiro)
+//    PAID       → paga no ciclo
+//    BLOCKED    → bloqueada por compliance
+//    GLOSA      → glosada (cancelamento dentro de 7 dias, etc.)
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+model CommissionEntry {
+  id         String   @id @default(cuid())
+
+  // ── Ciclo ────────────────────────────────────────────────────────────────
+  cycleId    String
+  cycle      CommissionCycle @relation(fields: [cycleId], references: [id])
+
+  // ── Promotor beneficiário ────────────────────────────────────────────────
+  userId     String
+  user       User     @relation("CommissionEntries", fields: [userId], references: [id])
+
+  // ── Pedido gerador ───────────────────────────────────────────────────────
+  orderId    String?
+  order      Order?   @relation(fields: [orderId], references: [id])
+
+  // ── Motor e tipo de parcela ──────────────────────────────────────────────
+  /// MOTOR1 | MOTOR2 | MOTOR3 | MOTOR4
+  motor      String
+
+  /// AQUISICAO | RETENCAO1 | RETENCAO2 | RECORRENCIA | DIRECT | COMPLIANCE
+  parcelaType String
+
+  // ── Carreira (Motor 3) ───────────────────────────────────────────────────
+  /// BRONZE | PRATA | OURO | DIAMANTE (nível do promotor no momento do cálculo)
+  careerLevel String?
+
+  /// Número de placas ativas (snapshot no momento do cálculo)
+  activePlates Int?
+
+  // ── Cálculo ──────────────────────────────────────────────────────────────
+  /// Valor Líquido base utilizado no cálculo
+  baseValue  Float
+
+  /// Percentual aplicado (ex: 10.0 para 10%)
+  percentage Float
+
+  /// Valor calculado (baseValue * percentage / 100)
+  amount     Float
+
+  // ── Status ────────────────────────────────────────────────────────────────
+  /// PENDING | VALIDATED | PAID | BLOCKED | GLOSA
+  status     String   @default("PENDING")
+
+  // ── Compliance (Motor 4) ─────────────────────────────────────────────────
+  /// Documentação validada?
+  documentOk     Boolean  @default(false)
+  /// Contrato assinado?
+  contractOk     Boolean  @default(false)
+  /// Ativação confirmada?
+  activationOk   Boolean  @default(false)
+  /// Situação financeira OK (sem inadimplência)?
+  financialOk    Boolean  @default(false)
+
+  // ── Fator Gerador ────────────────────────────────────────────────────────
+  /// Descrição do evento que gerou a comissão
+  /// Ex: "Venda #2026-RTX-00123 — Plano Rastremix Mensal — Motor 1 Aquisição"
+  fatorGerador  String?
+
+  /// Observações / motivo de glosa ou bloqueio
+  notes         String?
+
+  // ── Escalada Motor 1 ────────────────────────────────────────────────────
+  /// Número de vendas válidas no ciclo (para calcular escalada Motor 1)
+  salesCountInCycle Int?
+
+  /// Percentual escalonado efetivo (base 10% + 3% a cada 10 vendas)
+  escalatedPercentage Float?
+
+  // ── Multi-tenant ─────────────────────────────────────────────────────────
+  tenantId   String?
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([cycleId, userId])
+  @@index([userId, status])
+  @@index([orderId])
+  @@index([tenantId, motor])
+  @@index([tenantId, status])
 }
