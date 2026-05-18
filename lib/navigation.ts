@@ -83,7 +83,22 @@ export function getNavItems(role: Role): NavItem[] {
     ]
   }
 
-  // PROMOTER / PARTNER_EMPLOYEE — acesso somente via app mobile (Flutter)
-  // Essas roles não usam o painel web — são redirecionadas ao login
+  if (role === 'PROMOTER') {
+    return [
+      { label: 'Dashboard',     href: '/promotor/dashboard', icon: 'dashboard',  section: 'Meu Painel' },
+      { label: 'Meus Leads',    href: '/promotor/leads',     icon: 'users',      section: 'Meu Painel' },
+      { label: 'Minhas Vendas', href: '/promotor/vendas',    icon: 'chart',      section: 'Meu Painel' },
+      { label: 'Comissões',     href: '/promotor/comissoes', icon: 'commission', section: 'Meu Painel' },
+    ]
+  }
+
+  if (role === 'PARTNER_EMPLOYEE') {
+    return [
+      { label: 'Painel PDV',       href: '/vendedor/dashboard', icon: 'dashboard', section: 'Meu PDV' },
+      { label: 'Atendimentos',     href: '/vendedor/leads',     icon: 'kanban',    section: 'Meu PDV' },
+      { label: 'Novo Atendimento', href: '/vendedor/novo-lead', icon: 'tasks',     section: 'Meu PDV' },
+    ]
+  }
+
   return []
 }

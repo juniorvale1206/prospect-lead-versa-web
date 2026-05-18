@@ -9,7 +9,7 @@ interface JWTPayload {
   userId: string
   email: string
   nome: string
-  role: 'ADMIN_MASTER' | 'FINANCIAL' | 'MANAGER'
+  role: 'ADMIN_MASTER' | 'FINANCIAL' | 'MANAGER' | 'PROMOTER' | 'PARTNER_EMPLOYEE'
   tenantId: string | null
 }
 
@@ -54,6 +54,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // ── APIs de promotor e vendedor (autenticação via cookie no handler) ──────
+  if (pathname.startsWith('/api/promotor/') || pathname.startsWith('/api/vendedor/')) {
+    return NextResponse.next()
+  }
+
   // Rotas públicas - não precisa de autenticação
   const publicRoutes = ['/login', '/api/auth/login']
   if (publicRoutes.some((route) => pathname.startsWith(route))) {
@@ -61,8 +66,10 @@ export async function middleware(request: NextRequest) {
     if (pathname === '/login' && token) {
       const payload = await getPayload(token)
       if (payload) {
-        if (payload.role === 'ADMIN_MASTER') return NextResponse.redirect(new URL('/dashboard', request.url))
-        if (payload.role === 'FINANCIAL') return NextResponse.redirect(new URL('/financeiro', request.url))
+        if (payload.role === 'ADMIN_MASTER')    return NextResponse.redirect(new URL('/dashboard',          request.url))
+        if (payload.role === 'FINANCIAL')       return NextResponse.redirect(new URL('/financeiro',         request.url))
+        if (payload.role === 'PROMOTER')        return NextResponse.redirect(new URL('/promotor/dashboard', request.url))
+        if (payload.role === 'PARTNER_EMPLOYEE')return NextResponse.redirect(new URL('/vendedor/dashboard', request.url))
         return NextResponse.redirect(new URL('/operacao', request.url))
       }
     }
@@ -83,9 +90,26 @@ export async function middleware(request: NextRequest) {
 
   const role = payload.role
 
+  // /promotor/* → PROMOTER (e ADMIN_MASTER/MANAGER para debug)
+  if (pathname.startsWith('/promotor')) {
+    if (!['PROMOTER', 'ADMIN_MASTER', 'MANAGER'].includes(role)) {
+      return NextResponse.redirect(new URL('/acesso-negado', request.url))
+    }
+  }
+
+  // /vendedor/* → PARTNER_EMPLOYEE (e ADMIN_MASTER/MANAGER para debug)
+  if (pathname.startsWith('/vendedor')) {
+    if (!['PARTNER_EMPLOYEE', 'ADMIN_MASTER', 'MANAGER'].includes(role)) {
+      return NextResponse.redirect(new URL('/acesso-negado', request.url))
+    }
+  }
+
   // /admin/* → apenas ADMIN_MASTER
   if (pathname.startsWith('/admin')) {
     if (role !== 'ADMIN_MASTER') {
+      // Redirecionar para o painel correto de cada role
+      if (role === 'PROMOTER')         return NextResponse.redirect(new URL('/promotor/dashboard', request.url))
+      if (role === 'PARTNER_EMPLOYEE') return NextResponse.redirect(new URL('/vendedor/dashboard', request.url))
       return NextResponse.redirect(new URL('/acesso-negado', request.url))
     }
   }
